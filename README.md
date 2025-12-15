@@ -1,32 +1,21 @@
-# \# VeriRun
+# VeriRun
 
-# 
+A web-based Verilog simulation platform that uses Verilator to allow users to run simulations in a containerized environment.
 
-# A web-based Verilog simulation platform that uses Verilator to allow users to run simulations in a containerized environment.
+# Features
 
-# 
+- Online Verilog/SystemVerilog simulation
 
-# \## Features
+- Containerized execution environment
 
-# 
+- Docker integration for secure simulation execution
 
-# \- Online Verilog/SystemVerilog simulation
+- Support for UVM (Universal Verification Methodology)
 
-# \- Containerized execution environment
+# Prerequisites
 
-# \- Docker integration for secure simulation execution
+- Java 17 or higher
 
-# \- Support for UVM (Universal Verification Methodology)
-
-# 
-
-# \## Prerequisites
-
-# 
-
-# \- Java 17 or higher
-
-# \- Docker
-
-# \- Maven 3.6.0 or higher
+- Docker
+- Maven 3.6.0 or higher
 
