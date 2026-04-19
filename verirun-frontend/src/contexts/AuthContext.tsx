@@ -5,13 +5,17 @@ interface User {
   email: string;
 }
 
+interface AuthResult {
+  success: boolean;
+  errorMessage?: string;
+}
+
 interface AuthContextType {
   currentUser: User | null;
   isAuthenticated: boolean;
-  loading: boolean;
-  login: (email: string, password: string) => Promise<boolean>;
+  login: (email: string, password: string) => Promise<AuthResult>;
   logout: () => Promise<void>;
-  register: (email: string, password: string) => Promise<boolean>;
+  register: (email: string, password: string) => Promise<AuthResult>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -23,7 +27,6 @@ interface AuthProviderProps {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const checkAuthStatus = async () => {
@@ -40,17 +43,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             setIsAuthenticated(true);
           }
         }
-      } catch (error) {
-        console.error('Error checking authentication status:', error);
-      } finally {
-        setLoading(false);
+      } catch {
+        console.warn('Auth status check failed');
       }
     };
 
     checkAuthStatus();
   }, []);
 
-  const login = async (email: string, password: string): Promise<boolean> => {
+  const login = async (email: string, password: string): Promise<AuthResult> => {
     try {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
@@ -64,37 +65,42 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (response.ok) {
         setCurrentUser({ email });
         setIsAuthenticated(true);
-        return true;
-      } else {
-        const errorData = await response.text();
-        console.error('Login failed:', errorData);
-        return false;
+        return { success: true };
       }
-    } catch (error) {
-      console.error('Login error:', error);
-      return false;
+
+      if (response.status === 401) {
+        return { success: false, errorMessage: 'Invalid email or password' };
+      }
+
+      if (response.status === 429) {
+        return { success: false, errorMessage: 'Too many attempts. Please wait a moment and try again.' };
+      }
+
+      if (response.status >= 500) {
+        return { success: false, errorMessage: 'Server error. Please try again later.' };
+      }
+
+      return { success: false, errorMessage: 'Login failed. Please try again.' };
+    } catch {
+      return { success: false, errorMessage: 'Cannot connect to server. Check your internet connection.' };
     }
   };
 
   const logout = async (): Promise<void> => {
     try {
-      const response = await fetch('/api/auth/logout', {
+      await fetch('/api/auth/logout', {
         method: 'POST',
         credentials: 'include'
       });
-
-      if (!response.ok) {
-        console.error('Logout request failed');
-      }
-    } catch (error) {
-      console.error('Logout error:', error);
+    } catch {
+      console.warn('Logout request failed');
     } finally {
       setCurrentUser(null);
       setIsAuthenticated(false);
     }
   };
 
-  const register = async (email: string, password: string): Promise<boolean> => {
+  const register = async (email: string, password: string): Promise<AuthResult> => {
     try {
       const response = await fetch('/api/auth/register', {
         method: 'POST',
@@ -106,17 +112,28 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       });
 
       if (response.ok) {
-        const responseText = await response.text();
-        console.log('Registration response:', responseText);
-        return true;
-      } else {
-        const errorData = await response.text();
-        console.error('Registration failed:', errorData);
-        return false;
+        return { success: true };
       }
-    } catch (error) {
-      console.error('Registration error:', error);
-      return false;
+
+      if (response.status === 409) {
+        return { success: false, errorMessage: 'An account with this email already exists.' };
+      }
+
+      if (response.status === 400) {
+        return { success: false, errorMessage: 'Invalid input. Please check your email and password.' };
+      }
+
+      if (response.status === 429) {
+        return { success: false, errorMessage: 'Too many attempts. Please wait a moment and try again.' };
+      }
+
+      if (response.status >= 500) {
+        return { success: false, errorMessage: 'Server error. Please try again later.' };
+      }
+
+      return { success: false, errorMessage: 'Registration failed. Please try again.' };
+    } catch {
+      return { success: false, errorMessage: 'Cannot connect to server. Check your internet connection.' };
     }
   };
 
@@ -124,7 +141,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     <AuthContext.Provider value={{
       currentUser,
       isAuthenticated,
-      loading,
       login,
       logout,
       register

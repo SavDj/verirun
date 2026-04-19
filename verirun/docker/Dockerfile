@@ -3,7 +3,8 @@ FROM ubuntu:22.04
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     git autoconf make g++ flex bison libfl-dev \
     perl python3 wget curl build-essential \
-    libz3-dev help2man ca-certificates && \
+    libz3-dev zlib1g-dev help2man ca-certificates \
+    gtkwave && \
     rm -rf /var/lib/apt/lists/*
 
 RUN git clone https://github.com/verilator/verilator /tmp/verilator && \

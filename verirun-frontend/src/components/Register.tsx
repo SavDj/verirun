@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Link } from 'react-router-dom';
+import { validateEmail, validatePassword } from '../utils/validation';
 
 const Register: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -8,26 +9,42 @@ const Register: React.FC = () => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
-  const { register, loading } = useAuth();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const { register } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
 
-    if (password !== confirmPassword) {
-      setError('Passwords do not match');
+    const emailError = validateEmail(email);
+    if (emailError) {
+      setError(emailError);
       return;
     }
 
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+      setError(passwordError);
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+
+    setIsSubmitting(true);
     try {
-      const success = await register(email, password);
-      if (success) {
+      const result = await register(email, password);
+      if (result.success) {
         setSuccess(true);
       } else {
-        setError('Registration failed. Email may already be taken.');
+        setError(result.errorMessage || 'Registration failed. Please try again.');
       }
-    } catch (err) {
-      setError('An error occurred during registration');
-      console.error(err);
+    } catch {
+      setError('An unexpected error occurred. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -81,8 +98,8 @@ const Register: React.FC = () => {
               required
             />
           </div>
-          <button type="submit" disabled={loading}>
-            {loading ? 'Registering...' : 'Register'}
+          <button type="submit" disabled={isSubmitting}>
+            Register
           </button>
         </form>
         <p>

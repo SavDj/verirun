@@ -17,6 +17,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.web.bind.annotation.*;
+import jakarta.validation.Valid;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -39,7 +40,7 @@ public class AuthController {
     }
 
     @PostMapping("/register")
-    public ResponseEntity<String> register(@RequestBody UserDTO dto) {
+    public ResponseEntity<String> register(@Valid @RequestBody UserDTO dto) {
         Optional<User> user = userService.findByEmail(dto.email());
         if (user.isPresent()) {
             log.warn("Attempted registration with existing email: {}", dto.email());
@@ -52,7 +53,7 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<Void> login(@RequestBody UserDTO dto) {
+    public ResponseEntity<Void> login(@Valid @RequestBody UserDTO dto) {
         Authentication authentication = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(dto.email(), dto.password())
         );

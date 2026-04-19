@@ -25,10 +25,7 @@ public class UserDetailsServiceImpl implements UserDetailsService {
             throw new DisabledException("Email not verified");
         }
 
-        if(user != null) {
-            return UserDetailsImpl.getUserDetailsFromUser(user);
-        } else {
-            return null;
-        }
+        return UserDetailsImpl.getUserDetailsFromUser(user);
+
     }
 }

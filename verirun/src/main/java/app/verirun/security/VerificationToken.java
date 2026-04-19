@@ -3,7 +3,7 @@ package app.verirun.security;
 import app.verirun.entity.User;
 import jakarta.persistence.*;
 
-import java.util.Date;
+import java.time.Instant;
 import java.util.UUID;
 
 @Entity
@@ -21,15 +21,15 @@ public class VerificationToken {
     @JoinColumn(nullable = false, name = "user_id")
     private User user;
 
-    @Temporal(TemporalType.TIMESTAMP)
-    private Date dateCreated;
+    @Column(name = "date_created")
+    private Instant dateCreated;
 
     public VerificationToken() {
     }
 
     public VerificationToken(User user) {
         this.user = user;
-        dateCreated = new Date();
+        dateCreated = Instant.now();
         token = UUID.randomUUID().toString();
     }
 
@@ -57,11 +57,11 @@ public class VerificationToken {
         this.user = user;
     }
 
-    public Date getDateCreated() {
+    public Instant getDateCreated() {
         return dateCreated;
     }
 
-    public void setDateCreated(Date dateCreated) {
+    public void setDateCreated(Instant dateCreated) {
         this.dateCreated = dateCreated;
     }
 }

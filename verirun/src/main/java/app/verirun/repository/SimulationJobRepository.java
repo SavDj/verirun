@@ -4,6 +4,7 @@ import app.verirun.entity.SimulationJob;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,4 +24,20 @@ public interface SimulationJobRepository extends JpaRepository<SimulationJob, UU
     @Modifying
     @Query("UPDATE SimulationJob j SET j.cleanedUp = true WHERE j.jobId = :jobId")
     void markAsCleanedUp(String jobId);
+
+    @Query("""
+        SELECT j FROM SimulationJob j
+        WHERE j.cleanedUp = false
+          AND j.cleanupScheduledAt IS NOT NULL
+          AND j.cleanupScheduledAt <= :now
+    """)
+    List<SimulationJob> findExpiredJobs(@Param("now") Instant now);
+
+    @Query("""
+        SELECT j FROM SimulationJob j
+        WHERE j.status = 'RUNNING'
+          AND j.startedAt IS NOT NULL
+          AND j.startedAt <= :cutoff
+    """)
+    List<SimulationJob> findStuckJobs(@Param("cutoff") Instant cutoff);
 }

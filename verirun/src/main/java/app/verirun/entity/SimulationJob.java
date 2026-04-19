@@ -1,5 +1,6 @@
 package app.verirun.entity;
 
+import app.verirun.dto.VerilatorOptions;
 import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.UUID;
@@ -30,13 +31,28 @@ public class SimulationJob {
     @Column(length = 1000)
     private String errorMessage;
 
+    @Column(nullable = false)
+    private Integer retryCount = 0;
+
+    private Instant startedAt;
+
+    private Instant completedAt;
+
+    @Column(length = 10000)
+    private String resultJson;
+
+    @Convert(converter = VerilatorOptionsConverter.class)
+    @Column(columnDefinition = "TEXT")
+    private VerilatorOptions verilatorOptions;
+
     public SimulationJob() {}
 
-    public SimulationJob(String jobId, String directoryPath) {
+    public SimulationJob(String jobId, String directoryPath, VerilatorOptions options) {
         this.jobId = jobId;
         this.directoryPath = directoryPath;
+        this.verilatorOptions = options;
         this.createdAt = Instant.now();
-        this.cleanupScheduledAt = Instant.now().plusSeconds(3600); // 1 hour
+        this.cleanupScheduledAt = Instant.now().plusSeconds(3600);
     }
 
     public UUID getId() {
@@ -103,7 +119,47 @@ public class SimulationJob {
         this.errorMessage = errorMessage;
     }
 
+    public Integer getRetryCount() {
+        return retryCount;
+    }
+
+    public void setRetryCount(Integer retryCount) {
+        this.retryCount = retryCount;
+    }
+
+    public Instant getStartedAt() {
+        return startedAt;
+    }
+
+    public void setStartedAt(Instant startedAt) {
+        this.startedAt = startedAt;
+    }
+
+    public Instant getCompletedAt() {
+        return completedAt;
+    }
+
+    public void setCompletedAt(Instant completedAt) {
+        this.completedAt = completedAt;
+    }
+
+    public String getResultJson() {
+        return resultJson;
+    }
+
+    public void setResultJson(String resultJson) {
+        this.resultJson = resultJson;
+    }
+
+    public VerilatorOptions getVerilatorOptions() {
+        return verilatorOptions != null ? verilatorOptions : VerilatorOptions.defaults();
+    }
+
+    public void setVerilatorOptions(VerilatorOptions verilatorOptions) {
+        this.verilatorOptions = verilatorOptions;
+    }
+
     public enum JobStatus {
-        PENDING, COMPLETED, FAILED
+        PENDING, RUNNING, COMPLETED, FAILED
     }
 }

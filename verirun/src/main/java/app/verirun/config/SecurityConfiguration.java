@@ -60,7 +60,7 @@ public class SecurityConfiguration {
     public WebSecurityCustomizer webSecurityCustomizer() {
         return (web) -> web.ignoring()
                 .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/register")
-                .requestMatchers(HttpMethod.GET, "/", "/webjars/**", "/*.html", "favicon.ico",
+                .requestMatchers(HttpMethod.GET, "/", "/webjars/**", "/*.html",
                         "/*.css", "/*.js");
     }
 }
