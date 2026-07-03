@@ -22,9 +22,6 @@ public class SimulationJob {
     @Column(nullable = false)
     private Instant createdAt;
 
-    private Instant cleanupScheduledAt;
-    private boolean cleanedUp = false;
-
     @Enumerated(EnumType.STRING)
     private JobStatus status = JobStatus.PENDING;
 
@@ -52,7 +49,6 @@ public class SimulationJob {
         this.directoryPath = directoryPath;
         this.verilatorOptions = options;
         this.createdAt = Instant.now();
-        this.cleanupScheduledAt = Instant.now().plusSeconds(3600);
     }
 
     public UUID getId() {
@@ -85,22 +81,6 @@ public class SimulationJob {
 
     public void setCreatedAt(Instant createdAt) {
         this.createdAt = createdAt;
-    }
-
-    public Instant getCleanupScheduledAt() {
-        return cleanupScheduledAt;
-    }
-
-    public void setCleanupScheduledAt(Instant cleanupScheduledAt) {
-        this.cleanupScheduledAt = cleanupScheduledAt;
-    }
-
-    public boolean isCleanedUp() {
-        return cleanedUp;
-    }
-
-    public void setCleanedUp(boolean cleanedUp) {
-        this.cleanedUp = cleanedUp;
     }
 
     public JobStatus getStatus() {

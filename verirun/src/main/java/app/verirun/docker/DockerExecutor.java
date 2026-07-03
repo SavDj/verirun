@@ -11,6 +11,7 @@ import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.HostConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
@@ -22,153 +23,120 @@ import java.util.concurrent.TimeUnit;
 @Component
 @Profile("worker")
 public class DockerExecutor {
+
     private static final Logger log = LoggerFactory.getLogger(DockerExecutor.class);
 
     private final DockerClient dockerClient;
+    private final String verilatorImage;
 
-    private static final String VERILATOR_IMAGE = "verirun/verilator-uvm:latest";
-
-    public DockerExecutor(DockerClient dockerClient) {
+    public DockerExecutor(DockerClient dockerClient,
+                          @Value("${app.docker.verilator-image:verirun/verilator-uvm:latest}") String verilatorImage) {
         this.dockerClient = dockerClient;
+        this.verilatorImage = verilatorImage;
     }
 
     public ContainerResult runBuild(Path jobDir, String[] buildCmd,
                                     boolean generateModelOnly, long maxMemoryBytes, long cpuLimit,
                                     int buildTimeoutSeconds, int maxLogSize, String jobId) {
-        String buildContainerId = null;
 
-        try {
-            CreateContainerResponse buildContainer = dockerClient.createContainerCmd(VERILATOR_IMAGE)
-                    .withCmd(buildCmd)
-                    .withHostConfig(HostConfig.newHostConfig()
-                            .withBinds(Bind.parse(jobDir.toAbsolutePath() + ":/workspace"))
-                            .withMemory(maxMemoryBytes)
-                            .withCpuCount(cpuLimit)
-                            .withNetworkMode("none")
-                            .withPidsLimit(64L)
-                            .withReadonlyRootfs(false)
-                            .withCapDrop(Capability.ALL)
-                            .withSecurityOpts(List.of("no-new-privileges")))
-                    .withLabels(Map.of("app", "verirun", "jobId", jobId, "phase", "build"))
-                    .withVolumes(new com.github.dockerjava.api.model.Volume("/workspace"))
-                    .withWorkingDir("/workspace")
-                    .exec();
+        HostConfig hostConfig = createHostConfig(jobDir, maxMemoryBytes, cpuLimit, false);
+        ContainerResult result = executeContainer(buildCmd, hostConfig, buildTimeoutSeconds, maxLogSize, jobId, "build");
 
-            buildContainerId = buildContainer.getId();
-
-            dockerClient.startContainerCmd(buildContainerId).exec();
-
-            WaitContainerResultCallback callback = new WaitContainerResultCallback();
-            dockerClient.waitContainerCmd(buildContainerId).exec(callback);
-
-            boolean completed = callback.awaitCompletion(buildTimeoutSeconds, TimeUnit.SECONDS);
-
-            if (!completed) {
-                dockerClient.killContainerCmd(buildContainerId).exec();
-                WaitContainerResultCallback killCallback = new WaitContainerResultCallback();
-                dockerClient.waitContainerCmd(buildContainerId).exec(killCallback);
-                killCallback.awaitCompletion(5, TimeUnit.SECONDS);
-                return new ContainerResult(false, "Build timed out after " + buildTimeoutSeconds + " seconds", -1);
-            }
-
-            Long buildExitCode = dockerClient.inspectContainerCmd(buildContainerId)
-                    .exec().getState().getExitCodeLong();
-            LogToStringCallback logCallback = new LogToStringCallback(maxLogSize);
-            dockerClient.logContainerCmd(buildContainerId)
-                    .withStdOut(true)
-                    .withStdErr(true)
-                    .withFollowStream(true)
-                    .withSince(0)
-                    .exec(logCallback)
-                    .awaitCompletion(5, TimeUnit.SECONDS);
-
-            String buildLogs = logCallback.toString();
-
-            if (buildExitCode == null || buildExitCode != 0) {
-                return new ContainerResult(false, "BUILD FAILED:\n" + buildLogs,
-                        buildExitCode != null ? buildExitCode.intValue() : -1);
-            }
-
-            if (!generateModelOnly) {
-                return new ContainerResult(true, buildLogs, 0, true);
-            }
-
-            return new ContainerResult(true, buildLogs, 0);
-
-        } catch (Exception e) {
-            log.error("Build container execution failed", e);
-            return new ContainerResult(false, "Container error: " + e.getMessage(), -1);
-        } finally {
-            if (buildContainerId != null) {
-                cleanupContainer(buildContainerId, "build");
-            }
+        if (!result.passed() || generateModelOnly) {
+            return result;
         }
+
+        return new ContainerResult(true, result.logs(), 0, true);
     }
 
     public ContainerResult runSimulation(Path jobDir, String[] simCmd,
                                          long maxMemoryBytes, long cpuLimit,
                                          int runTimeoutSeconds, int maxLogSize,
                                          String buildLogs, String jobId) {
-        String runContainerId = null;
 
+        HostConfig hostConfig = createHostConfig(jobDir, maxMemoryBytes, cpuLimit, true);
+        ContainerResult result = executeContainer(simCmd, hostConfig, runTimeoutSeconds, maxLogSize, jobId, "simulation");
+
+        return new ContainerResult(
+                result.passed(),
+                buildLogs + "\n=== SIMULATION OUTPUT ===\n" + result.logs(),
+                result.exitCode()
+        );
+    }
+
+    private HostConfig createHostConfig(Path jobDir, long maxMemoryBytes, long cpuLimit, boolean readOnlyRootfs) {
+        return HostConfig.newHostConfig()
+                .withBinds(Bind.parse(jobDir.toAbsolutePath() + ":/workspace"))
+                .withMemory(maxMemoryBytes)
+                .withCpuCount(cpuLimit)
+                .withNetworkMode("none")
+                .withPidsLimit(64L)
+                .withReadonlyRootfs(readOnlyRootfs)
+                .withCapDrop(Capability.ALL)
+                .withSecurityOpts(List.of("no-new-privileges"));
+    }
+
+    private ContainerResult executeContainer(String[] cmd, HostConfig hostConfig,
+                                             int timeoutSeconds, int maxLogSize, String jobId, String phase) {
+        String containerId = null;
         try {
-            CreateContainerResponse runContainer = dockerClient.createContainerCmd(VERILATOR_IMAGE)
-                    .withCmd(simCmd)
-                    .withHostConfig(HostConfig.newHostConfig()
-                            .withBinds(Bind.parse(jobDir.toAbsolutePath() + ":/workspace"))
-                            .withMemory(maxMemoryBytes)
-                            .withCpuCount(cpuLimit)
-                            .withNetworkMode("none")
-                            .withPidsLimit(64L)
-                            .withReadonlyRootfs(true)
-                            .withCapDrop(Capability.ALL)
-                            .withSecurityOpts(List.of("no-new-privileges")))
-                    .withLabels(Map.of("app", "verirun", "jobId", jobId, "phase", "simulation"))
-                    .withVolumes(new com.github.dockerjava.api.model.Volume("/workspace"))
+            CreateContainerResponse container = dockerClient.createContainerCmd(verilatorImage)
+                    .withCmd(cmd)
+                    .withHostConfig(hostConfig)
+                    .withLabels(Map.of("app", "verirun", "jobId", jobId, "phase", phase))
                     .withWorkingDir("/workspace")
                     .exec();
 
-            runContainerId = runContainer.getId();
+            containerId = container.getId();
+            dockerClient.startContainerCmd(containerId).exec();
 
-            dockerClient.startContainerCmd(runContainerId).exec();
+            WaitContainerResultCallback waitCallback = new WaitContainerResultCallback();
+            dockerClient.waitContainerCmd(containerId).exec(waitCallback);
 
-            WaitContainerResultCallback simCallback = new WaitContainerResultCallback();
-            dockerClient.waitContainerCmd(runContainerId).exec(simCallback);
+            boolean completed = waitCallback.awaitCompletion(timeoutSeconds, TimeUnit.SECONDS);
 
-            boolean simCompleted = simCallback.awaitCompletion(runTimeoutSeconds, TimeUnit.SECONDS);
-
-            if (!simCompleted) {
-                dockerClient.killContainerCmd(runContainerId).exec();
-                WaitContainerResultCallback simKillCallback = new WaitContainerResultCallback();
-                dockerClient.waitContainerCmd(runContainerId).exec(simKillCallback);
-                simKillCallback.awaitCompletion(5, TimeUnit.SECONDS);
-                return new ContainerResult(false,
-                        buildLogs + "\n=== SIMULATION TIMED OUT ===", -1);
+            if (!completed) {
+                killContainer(containerId);
+                return new ContainerResult(false, "Execution timed out after " + timeoutSeconds + " seconds", -1);
             }
 
-            LogToStringCallback simLogCallback = new LogToStringCallback(maxLogSize);
-            dockerClient.logContainerCmd(runContainerId)
-                    .withStdOut(true).withStdErr(true)
-                    .exec(simLogCallback)
-                    .awaitCompletion(5, TimeUnit.SECONDS);
-            String simLogs = simLogCallback.toString();
-            Long simExitCode = dockerClient.inspectContainerCmd(runContainerId).exec().getState().getExitCodeLong();
+            Long exitCode = dockerClient.inspectContainerCmd(containerId).exec().getState().getExitCodeLong();
+            String logs = fetchLogs(containerId, maxLogSize);
 
-            cleanupContainer(runContainerId, "simulation");
-            runContainerId = null;
-
-            return new ContainerResult(simExitCode != null && (simExitCode == 0 || simExitCode == 127),
-                    buildLogs + "\n=== SIMULATION OUTPUT ===\n" + simLogs,
-                    simExitCode != null ? simExitCode.intValue() : -1);
+            boolean passed = exitCode != null && (exitCode == 0 || (phase.equals("simulation") && exitCode == 127));
+            return new ContainerResult(passed, logs, exitCode != null ? exitCode.intValue() : -1);
 
         } catch (Exception e) {
-            log.error("Simulation container execution failed", e);
-            return new ContainerResult(false, buildLogs + "\nContainer error: " + e.getMessage(), -1);
+            log.error("{} container execution failed", phase, e);
+            return new ContainerResult(false, "Container error: " + e.getMessage(), -1);
         } finally {
-            if (runContainerId != null) {
-                cleanupContainer(runContainerId, "simulation");
+            if (containerId != null) {
+                cleanupContainer(containerId, phase);
             }
         }
+    }
+
+    private void killContainer(String containerId) {
+        try {
+            dockerClient.killContainerCmd(containerId).exec();
+            WaitContainerResultCallback killCallback = new WaitContainerResultCallback();
+            dockerClient.waitContainerCmd(containerId).exec(killCallback);
+            killCallback.awaitCompletion(5, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            log.warn("Failed to kill container {}", containerId, e);
+        }
+    }
+
+    private String fetchLogs(String containerId, int maxLogSize) throws InterruptedException {
+        LogToStringCallback logCallback = new LogToStringCallback(maxLogSize);
+        dockerClient.logContainerCmd(containerId)
+                .withStdOut(true)
+                .withStdErr(true)
+                .withFollowStream(true)
+                .withSince(0)
+                .exec(logCallback)
+                .awaitCompletion(5, TimeUnit.SECONDS);
+        return logCallback.toString();
     }
 
     private void cleanupContainer(String containerId, String label) {
@@ -191,6 +159,7 @@ public class DockerExecutor {
     private static class LogToStringCallback extends ResultCallbackTemplate<LogToStringCallback, Frame> {
         private final StringBuilder output = new StringBuilder();
         private final int maxLogSize;
+        private boolean truncated = false;
 
         public LogToStringCallback(int maxLogSize) {
             this.maxLogSize = maxLogSize;
@@ -198,16 +167,23 @@ public class DockerExecutor {
 
         @Override
         public void onNext(Frame item) {
-            output.append(new String(item.getPayload()));
+            if (truncated) return;
+
+            String payload = new String(item.getPayload());
+            if (output.length() + payload.length() > maxLogSize) {
+                output.append(payload, 0, maxLogSize - output.length());
+                truncated = true;
+            } else {
+                output.append(payload);
+            }
         }
 
         @Override
         public String toString() {
-            String result = output.toString();
-            if (result.length() > maxLogSize) {
-                return result.substring(0, maxLogSize) + "\n[TRUNCATED - log size limit exceeded]";
+            if (truncated) {
+                return output.toString() + "\n[TRUNCATED - log size limit exceeded]";
             }
-            return result;
+            return output.toString();
         }
     }
 }

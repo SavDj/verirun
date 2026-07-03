@@ -3,13 +3,24 @@ package app.verirun.service;
 import app.verirun.dto.VerilatorOptions;
 import app.verirun.dto.VerilatorOptions.BuildMode;
 import app.verirun.dto.VerilatorOptions.OptimizationLevel;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 
 @Service
 public class VerilatorCommandBuilder {
+    private static final Pattern DANGEROUS_EXTRA_FLAGS = Pattern.compile(
+            "(-CFLAGS|-LDFLAGS|-LDLIBS|--exe|--build|--make)"
+    );
+
+    private final String uvmHome;
+
+    public VerilatorCommandBuilder(@Value("${app.verilator.uvm-home:/usr/share/uvm}") String uvmHome) {
+        this.uvmHome = uvmHome;
+    }
 
     public String[] buildCommand(VerilatorOptions options, String topModule, boolean hasTestbench, boolean usesUvm) {
         List<String> cmd = new ArrayList<>();
@@ -17,20 +28,16 @@ public class VerilatorCommandBuilder {
         cmd.add("verilator");
         cmd.add("--timing");
 
-        if (options.buildMode() == BuildMode.LINT_ONLY) {
+        BuildMode mode = options.buildMode();
+        if (mode == BuildMode.LINT_ONLY) {
             cmd.add("--lint-only");
-        }
-
-        if (options.buildMode() != BuildMode.LINT_ONLY) {
+        } else {
             cmd.add("-j");
             cmd.add(String.valueOf(options.parallelJobs()));
             cmd.add(optLevelFlag(options.optLevel()));
-        }
 
-        if (options.buildMode() == BuildMode.CC_MODEL) {
-            cmd.add("--cc");
-        } else if (options.buildMode() == BuildMode.BINARY) {
-            cmd.add("--binary");
+            if (mode == BuildMode.CC_MODEL) cmd.add("--cc");
+            else if (mode == BuildMode.BINARY) cmd.add("--binary");
         }
 
         cmd.add("--top-module");
@@ -60,29 +67,23 @@ public class VerilatorCommandBuilder {
             cmd.add("--coverage");
         }
 
-        for (String inc : options.includes()) {
-            if (!inc.isBlank()) cmd.add("+incdir+" + inc);
-        }
-
-        for (String def : options.defines()) {
-            if (!def.isBlank()) cmd.add("+define+" + def);
-        }
-
-        for (String wno : options.warningsOff()) {
-            if (!wno.isBlank()) cmd.add("-Wno-" + wno);
-        }
+        addPrefixedFlags(cmd, options.includes(), "+incdir+");
+        addPrefixedFlags(cmd, options.defines(), "+define+");
+        addPrefixedFlags(cmd, options.warningsOff(), "-Wno-");
 
         if (usesUvm) {
-            String uvm = resolveUvmHome();
             cmd.add("-Wno-fatal");
-            cmd.add("+incdir+" + uvm);
+            cmd.add("+incdir+" + uvmHome);
             cmd.add("+define+UVM_NO_DPI");
             cmd.add("+incdir+.");
-            cmd.add(uvm + "/uvm_pkg.sv");
+            cmd.add(uvmHome + "/uvm_pkg.sv");
         }
 
         for (String flag : options.extraFlags()) {
-            if (!flag.isBlank()) cmd.add(flag);
+            if (!flag.isBlank()) {
+                validateExtraFlag(flag);
+                cmd.add(flag);
+            }
         }
 
         cmd.add("design.sv");
@@ -98,7 +99,11 @@ public class VerilatorCommandBuilder {
         List<String> cmd = new ArrayList<>();
         cmd.add("./obj_dir/V" + topModule);
         if (simArgs != null) {
-            cmd.addAll(simArgs);
+            for (String arg : simArgs) {
+                if (!arg.isBlank()) {
+                    cmd.add(arg);
+                }
+            }
         }
         return cmd.toArray(new String[0]);
     }
@@ -112,11 +117,15 @@ public class VerilatorCommandBuilder {
         };
     }
 
-    private String resolveUvmHome() {
-        String env = System.getenv("UVM_HOME");
-        if (env != null && !env.isEmpty()) {
-            return env;
+    private void addPrefixedFlags(List<String> cmd, List<String> flags, String prefix) {
+        for (String flag : flags) {
+            if (!flag.isBlank()) cmd.add(prefix + flag);
         }
-        return "/usr/share/uvm";
+    }
+
+    private void validateExtraFlag(String flag) {
+        if (DANGEROUS_EXTRA_FLAGS.matcher(flag).find()) {
+            throw new SecurityException("Security Violation: Dangerous Verilator flag detected: " + flag);
+        }
     }
 }

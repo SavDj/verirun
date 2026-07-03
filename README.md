@@ -2,11 +2,26 @@
 
 A web-based Verilog simulation platform that uses Verilator to allow users to run simulations in a containerized environment.
 
-# Features
+## Prerequisites
 
-* Online Verilog/SystemVerilog simulation
-* Containerized execution environment
-* Docker integration for secure simulation execution
-* Support for UVM (Universal Verification Methodology)
-* Waveform generation (VCD)
+- Java 21 & Maven
+- Docker
+-  PostgreSQL
+-  Redis
+-  S3-compatible storage
 
+### 1. Start the backend
+
+Configure your database, Redis, and AWS credentials in `src/main/resources/application.properties`, then run:
+
+```bash
+mvnw spring-boot:run
+```
+
+### 1. Start the frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```

@@ -7,57 +7,90 @@ import app.verirun.dto.VerilatorOptions;
 import app.verirun.dto.VerilatorOptions.BuildMode;
 import app.verirun.entity.SimulationJob;
 import app.verirun.repository.SimulationJobRepository;
+import app.verirun.storage.ArtifactStorageService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.sonus21.rqueue.annotation.RqueueListener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.util.FileSystemUtils;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 @Service
 @Profile("worker")
 public class WorkerService {
+
     private static final Logger log = LoggerFactory.getLogger(WorkerService.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final java.util.regex.Pattern MODULE_PATTERN =
-            java.util.regex.Pattern.compile("module\\s+([a-zA-Z_][a-zA-Z0-9_]*)");
 
     private final DockerExecutor dockerExecutor;
     private final SimulationJobRepository jobRepository;
     private final VerilatorCommandBuilder commandBuilder;
+    private final VerilogParserService parserService;
+    private final ArtifactStorageService storageService;
+    private final JobQueueService jobQueueService;
 
-    private static final int BUILD_TIMEOUT_SECONDS = 120;
-    private static final int RUN_TIMEOUT_SECONDS = 60;
-    private static final long MAX_MEMORY_BYTES = 512 * 1024 * 1024L;
-    private static final long CPU_LIMIT = 1L;
-    private static final String MAX_RETRIES = "2";
-    private static final int MAX_LOG_SIZE = 100_000;
-    private static final String WORKSPACE_BASE = System.getProperty("java.io.tmpdir") + "/verirun";
-    private static final int JOB_TIMEOUT_SECONDS = 180;
+    private final Path workspaceBasePath;
+    private final int buildTimeoutSeconds;
+    private final int runTimeoutSeconds;
+    private final long maxMemoryBytes;
+    private final long cpuLimit;
+    private final int maxLogSize;
+    private final int jobTimeoutSeconds;
+    private final int maxRetries;
 
-    public WorkerService(DockerExecutor dockerExecutor,
-                         SimulationJobRepository jobRepository,
-                         VerilatorCommandBuilder commandBuilder) {
+    public WorkerService(
+            DockerExecutor dockerExecutor,
+            SimulationJobRepository jobRepository,
+            VerilatorCommandBuilder commandBuilder,
+            VerilogParserService parserService,
+            ArtifactStorageService storageService,
+            JobQueueService jobQueueService,
+            @Value("${app.workspace.base-path:./verirun-workspace}") String workspaceBasePath,
+            @Value("${app.worker.build-timeout-seconds:120}") int buildTimeoutSeconds,
+            @Value("${app.worker.run-timeout-seconds:60}") int runTimeoutSeconds,
+            @Value("${app.worker.max-memory-bytes:536870912}") long maxMemoryBytes,
+            @Value("${app.worker.cpu-limit:1}") long cpuLimit,
+            @Value("${app.worker.max-log-size:100000}") int maxLogSize,
+            @Value("${app.worker.job-timeout-seconds:180}") int jobTimeoutSeconds,
+            @Value("${app.worker.max-retries:2}") int maxRetries) {
+
         this.dockerExecutor = dockerExecutor;
         this.jobRepository = jobRepository;
         this.commandBuilder = commandBuilder;
+        this.parserService = parserService;
+        this.storageService = storageService;
+        this.jobQueueService = jobQueueService;
+        this.workspaceBasePath = Paths.get(workspaceBasePath);
+        this.buildTimeoutSeconds = buildTimeoutSeconds;
+        this.runTimeoutSeconds = runTimeoutSeconds;
+        this.maxMemoryBytes = maxMemoryBytes;
+        this.cpuLimit = cpuLimit;
+        this.maxLogSize = maxLogSize;
+        this.jobTimeoutSeconds = jobTimeoutSeconds;
+        this.maxRetries = maxRetries;
     }
 
-    @RqueueListener(value = JobQueueService.JOB_QUEUE, numRetries = MAX_RETRIES)
+    @RqueueListener(value = "${app.queue.job-name}", numRetries = "${app.worker.max-retries:2}")
     public void processJob(JobMessage message) throws IOException {
         String jobId = message.getJobId();
         Optional<SimulationJob> jobOpt = jobRepository.findByJobId(jobId);
+
         if (jobOpt.isEmpty()) {
             log.warn("Job {} not found in database", jobId);
             return;
@@ -65,96 +98,75 @@ public class WorkerService {
 
         SimulationJob job = jobOpt.get();
 
-        if (job.getStatus() == SimulationJob.JobStatus.COMPLETED) {
-            log.info("Job {} already completed, skipping", jobId);
-            return;
-        }
-        if (job.getStatus() == SimulationJob.JobStatus.RUNNING) {
-            log.warn("Job {} already running, skipping", jobId);
+        if (job.getStatus() == SimulationJob.JobStatus.COMPLETED ||
+                job.getStatus() == SimulationJob.JobStatus.FAILED) {
+            log.info("Job {} already in terminal state {}, skipping", jobId, job.getStatus());
             return;
         }
 
-        log.info("Processing job {}", jobId);
+        int claimed = jobRepository.claimJob(jobId, Instant.now());
+        if (claimed == 0) {
+            log.warn("Job {} was already claimed by another worker or is not in PENDING state", jobId);
+            return;
+        }
+
+        log.info("Successfully claimed and processing job {}", jobId);
+
+        job.setStatus(SimulationJob.JobStatus.RUNNING);
+        job.setStartedAt(Instant.now());
 
         try {
-            job.setStatus(SimulationJob.JobStatus.RUNNING);
-            job.setStartedAt(Instant.now());
-            jobRepository.save(job);
-
             ContainerResult result = executeSimulation(job);
+            uploadArtifactsToS3(Paths.get(job.getDirectoryPath()), job.getJobId(), result);
 
             job.setStatus(SimulationJob.JobStatus.COMPLETED);
             job.setResultJson(resultToJson(result));
             job.setCompletedAt(Instant.now());
-            job.setCleanupScheduledAt(Instant.now().plusSeconds(3600));
-            job.setCleanedUp(false);
             jobRepository.save(job);
 
-            log.info("Job {} completed successfully", jobId);
+            log.info("Job {} completed and uploaded to S3", jobId);
 
         } catch (Exception e) {
             log.error("Job {} failed", jobId, e);
             handleJobFailure(job, e);
             throw e;
+        } finally {
+            deleteLocalDirectory(Paths.get(job.getDirectoryPath()));
         }
     }
 
     @Scheduled(fixedDelay = 30000)
     public void recoverStuckJobs() {
-        Instant cutoff = Instant.now().minusSeconds(JOB_TIMEOUT_SECONDS);
+        Instant cutoff = Instant.now().minusSeconds(jobTimeoutSeconds);
         List<SimulationJob> stuckJobs = jobRepository.findStuckJobs(cutoff);
 
         for (SimulationJob job : stuckJobs) {
             log.warn("Recovering stuck job {} (running since {})", job.getJobId(), job.getStartedAt());
-
-            int retryCount = job.getRetryCount() != null ? job.getRetryCount() : 0;
-
-            if (retryCount < Integer.parseInt(MAX_RETRIES)) {
-                job.setRetryCount(retryCount + 1);
-                job.setStatus(SimulationJob.JobStatus.PENDING);
-                job.setStartedAt(null);
-                jobRepository.save(job);
-
-                log.info("Job {} requeued for retry (attempt {}/{})", job.getJobId(), retryCount + 1, MAX_RETRIES);
-            } else {
-                job.setStatus(SimulationJob.JobStatus.FAILED);
-                job.setErrorMessage("Job timed out after " + MAX_RETRIES + " retries");
-                job.setCompletedAt(Instant.now());
-                job.setCleanupScheduledAt(Instant.now().plusSeconds(300));
-                job.setCleanedUp(false);
-                jobRepository.save(job);
-
-                log.error("Job {} failed permanently - stuck after {} retries", job.getJobId(), MAX_RETRIES);
-            }
-        }
-
-        if (!stuckJobs.isEmpty()) {
-            jobRepository.saveAll(stuckJobs);
-            log.info("Recovered {} stuck jobs", stuckJobs.size());
-        }
-    }
-
-    private void handleJobFailure(SimulationJob job, Exception e) {
-        String jobId = job.getJobId();
-        int retryCount = job.getRetryCount() != null ? job.getRetryCount() : 0;
-
-        if (retryCount < Integer.parseInt(MAX_RETRIES)) {
-            job.setRetryCount(retryCount + 1);
             job.setStatus(SimulationJob.JobStatus.PENDING);
             job.setStartedAt(null);
             jobRepository.save(job);
 
-            log.warn("Job {} failed, retrying (attempt {}/{})", jobId, retryCount + 1, MAX_RETRIES);
+            jobQueueService.enqueueJob(job.getJobId());
+            log.info("Re-enqueued stuck job {}", job.getJobId());
+        }
+    }
+
+    private void handleJobFailure(SimulationJob job, Exception e) {
+        int retryCount = job.getRetryCount() != null ? job.getRetryCount() : 0;
+
+        if (retryCount < maxRetries) {
+            job.setRetryCount(retryCount + 1);
+            job.setStatus(SimulationJob.JobStatus.PENDING);
+            job.setStartedAt(null);
+            log.warn("Job {} failed, retrying (attempt {}/{})", job.getJobId(), retryCount + 1, maxRetries);
         } else {
             job.setStatus(SimulationJob.JobStatus.FAILED);
             job.setErrorMessage(Optional.ofNullable(e.getMessage()).orElse(e.getClass().getSimpleName()));
             job.setCompletedAt(Instant.now());
-            job.setCleanupScheduledAt(Instant.now().plusSeconds(300));
-            job.setCleanedUp(false);
-            jobRepository.save(job);
-
-            log.error("Job {} failed permanently after {} retries", jobId, MAX_RETRIES, e);
+            log.error("Job {} failed permanently after {} retries", job.getJobId(), maxRetries, e);
         }
+
+        jobRepository.save(job);
     }
 
     private String resultToJson(ContainerResult result) {
@@ -174,24 +186,22 @@ public class WorkerService {
         }
 
         Path realJobDir = jobDir.toRealPath();
-        Path realWorkspaceBase = Paths.get(WORKSPACE_BASE).toRealPath();
+
+        if (!Files.exists(workspaceBasePath)) {
+            Files.createDirectories(workspaceBasePath);
+        }
+        Path realWorkspaceBase = workspaceBasePath.toRealPath();
+
         if (!realJobDir.startsWith(realWorkspaceBase)) {
             throw new SecurityException("Invalid workspace path: job directory outside workspace base");
         }
 
-        try (var stream = Files.list(jobDir)) {
-            stream.forEach(path -> {
-                String fileName = path.getFileName().toString();
-                if (!fileName.equals("design.sv") && !fileName.equals("testbench.sv")) {
-                    throw new SecurityException("Unexpected file in job directory: " + fileName);
-                }
-            });
-        }
-
         VerilatorOptions options = job.getVerilatorOptions();
         boolean hasTestbench = hasTestbench(jobDir);
-        String topModule = resolveTopModule(jobDir);
-        boolean usesUvm = detectUvmUsage(jobDir);
+
+        Path targetFile = hasTestbench ? jobDir.resolve("testbench.sv") : jobDir.resolve("design.sv");
+        String topModule = parserService.resolveTopModule(targetFile);
+        boolean usesUvm = parserService.detectUvmUsage(targetFile);
 
         if (usesUvm && !hasTestbench) {
             throw new IllegalArgumentException("Testbench is required for UVM mode");
@@ -204,7 +214,7 @@ public class WorkerService {
 
         log.info("Executing verilator build for job {}", job.getJobId());
         ContainerResult buildResult = dockerExecutor.runBuild(jobDir, buildCmd,
-                !needsRun, MAX_MEMORY_BYTES, CPU_LIMIT, BUILD_TIMEOUT_SECONDS, MAX_LOG_SIZE, job.getJobId());
+                !needsRun, maxMemoryBytes, cpuLimit, buildTimeoutSeconds, maxLogSize, job.getJobId());
 
         if (!buildResult.passed()) {
             return buildResult;
@@ -213,53 +223,79 @@ public class WorkerService {
         if (needsRun) {
             String[] simCmd = commandBuilder.simulationCommand(topModule, options.simArgs());
             return dockerExecutor.runSimulation(jobDir, simCmd,
-                    MAX_MEMORY_BYTES, CPU_LIMIT, RUN_TIMEOUT_SECONDS, MAX_LOG_SIZE, buildResult.logs(), job.getJobId());
+                    maxMemoryBytes, cpuLimit, runTimeoutSeconds, maxLogSize, buildResult.logs(), job.getJobId());
         }
 
         return buildResult;
     }
 
+    private void uploadArtifactsToS3(Path jobDir, String jobId, ContainerResult result) {
+        try {
+            Path logsFile = jobDir.resolve("simulation.log");
+            Files.writeString(logsFile, result.logs() != null ? result.logs() : "No logs available.");
+            storageService.uploadArtifact(jobId, "simulation.log", logsFile);
+
+            try (var stream = Files.list(jobDir)) {
+                List<Path> waveforms = stream.filter(p ->
+                        p.getFileName().toString().toLowerCase().endsWith(".vcd")
+                ).toList();
+
+                for (Path waveform : waveforms) {
+                    String standardName = "waveform.vcd";
+                    Path standardPath = jobDir.resolve(standardName);
+
+                    if (!waveform.getFileName().toString().equals(standardName)) {
+                        Files.move(waveform, standardPath, StandardCopyOption.REPLACE_EXISTING);
+                    }
+
+                    storageService.uploadArtifact(jobId, standardName, standardPath);
+                    log.info("Uploaded {} for job {}", standardName, jobId);
+                }
+            }
+
+            Path objDir = jobDir.resolve("obj_dir");
+            if (Files.exists(objDir) && Files.isDirectory(objDir)) {
+                Path zipFile = jobDir.resolve("model.zip");
+                zipDirectory(objDir, zipFile);
+                storageService.uploadArtifact(jobId, "model.zip", zipFile);
+                Files.deleteIfExists(zipFile);
+                log.info("Uploaded model.zip for job {}", jobId);
+            }
+
+        } catch (IOException e) {
+            log.error("Failed to upload artifacts for job {}", jobId, e);
+        }
+    }
+
+    private void zipDirectory(Path sourceDir, Path zipFilePath) throws IOException {
+        try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(zipFilePath))) {
+            Files.walk(sourceDir)
+                    .filter(path -> !Files.isDirectory(path))
+                    .forEach(path -> {
+                        String entryName = sourceDir.relativize(path).toString().replace("\\", "/");
+                        ZipEntry zipEntry = new ZipEntry(entryName);
+                        try {
+                            zos.putNextEntry(zipEntry);
+                            Files.copy(path, zos);
+                            zos.closeEntry();
+                        } catch (IOException e) {
+                            log.error("Failed to add {} to zip", path, e);
+                        }
+                    });
+        }
+    }
+
+    private void deleteLocalDirectory(Path dir) {
+        if (dir == null || !Files.exists(dir)) return;
+        try {
+            FileSystemUtils.deleteRecursively(dir);
+            log.debug("Cleaned up local scratchpad: {}", dir);
+        } catch (Exception e) {
+            log.warn("Failed to clean up local scratchpad: {}", dir, e);
+        }
+    }
+
     private boolean hasTestbench(Path jobDir) {
         return Files.exists(jobDir.resolve("testbench.sv"));
-    }
-
-    private String resolveTopModule(Path jobDir) {
-        try {
-            Path testbenchPath = jobDir.resolve("testbench.sv");
-            if (!Files.exists(testbenchPath)) {
-                return "design_top";
-            }
-
-            String testbenchCode = Files.readString(testbenchPath);
-            java.util.regex.Matcher matcher = MODULE_PATTERN.matcher(testbenchCode);
-            if (matcher.find()) {
-                String moduleName = matcher.group(1);
-                if (!moduleName.matches("^[a-zA-Z_][a-zA-Z0-9_]*$")) {
-                    throw new IllegalArgumentException("Invalid module name in testbench");
-                }
-                return moduleName;
-            }
-            throw new IllegalArgumentException("No 'module' declaration found in testbench");
-        } catch (IOException e) {
-            log.warn("Could not read testbench, using default top module", e);
-            return "design_top";
-        }
-    }
-
-    private boolean detectUvmUsage(Path jobDir) {
-        try {
-            Path testbenchPath = jobDir.resolve("testbench.sv");
-            if (!Files.exists(testbenchPath)) {
-                return false;
-            }
-
-            String testbench = Files.readString(testbenchPath).toLowerCase();
-            return testbench.contains("uvm_pkg") ||
-                    testbench.contains("uvm_macros") ||
-                    testbench.contains("`uvm") ||
-                    testbench.contains("import uvm_pkg");
-        } catch (IOException e) {
-            return false;
-        }
     }
 }

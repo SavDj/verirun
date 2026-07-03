@@ -1,5 +1,6 @@
 package app.verirun.controller;
 
+import app.verirun.dto.AuthStatusResponse;
 import app.verirun.dto.UserDTO;
 import app.verirun.entity.User;
 import app.verirun.security.UserDetailsImpl;
@@ -20,7 +21,6 @@ import org.springframework.web.bind.annotation.*;
 import jakarta.validation.Valid;
 
 import java.util.Optional;
-import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -104,6 +104,4 @@ public class AuthController {
             return ResponseEntity.ok(new AuthStatusResponse(false, null, null));
         }
     }
-
-    public record AuthStatusResponse(boolean authenticated, String email, UUID userId) {}
 }

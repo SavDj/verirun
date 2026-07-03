@@ -68,7 +68,7 @@ public class UserService {
         SimpleMailMessage mailMessage = new SimpleMailMessage();
         mailMessage.setTo(email);
         mailMessage.setSubject("Verify your VeriRun account");
-        mailMessage.setText("Click the link to verify your account:\n" + baseUrl + "/verify?token=" + token.getToken());
+        mailMessage.setText("Click the link to verify your account:\n" + baseUrl + "/verify-account?token=" + token.getToken());
 
         //emailService.sendEmail(mailMessage);
     }

@@ -3,7 +3,6 @@ package app.verirun.security.service;
 import app.verirun.entity.User;
 import app.verirun.security.UserDetailsImpl;
 import app.verirun.service.UserService;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
@@ -13,8 +12,11 @@ import org.springframework.stereotype.Service;
 @Service
 public class UserDetailsServiceImpl implements UserDetailsService {
 
-    @Autowired
-    private UserService userService;
+    private final UserService userService;
+
+    public UserDetailsServiceImpl(UserService userService) {
+        this.userService = userService;
+    }
 
     @Override
     public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
@@ -26,6 +28,5 @@ public class UserDetailsServiceImpl implements UserDetailsService {
         }
 
         return UserDetailsImpl.getUserDetailsFromUser(user);
-
     }
 }
