@@ -36,7 +36,7 @@ public class DockerExecutor {
     }
 
     public ContainerResult runBuild(Path jobDir, String[] buildCmd,
-                                    boolean generateModelOnly, long maxMemoryBytes, long cpuLimit,
+                                    boolean generateModelOnly, long maxMemoryBytes, double cpuLimit,
                                     int buildTimeoutSeconds, int maxLogSize, String jobId) {
 
         HostConfig hostConfig = createHostConfig(jobDir, maxMemoryBytes, cpuLimit, false);
@@ -50,7 +50,7 @@ public class DockerExecutor {
     }
 
     public ContainerResult runSimulation(Path jobDir, String[] simCmd,
-                                         long maxMemoryBytes, long cpuLimit,
+                                         long maxMemoryBytes, double cpuLimit,
                                          int runTimeoutSeconds, int maxLogSize,
                                          String buildLogs, String jobId) {
 
@@ -64,16 +64,26 @@ public class DockerExecutor {
         );
     }
 
-    private HostConfig createHostConfig(Path jobDir, long maxMemoryBytes, long cpuLimit, boolean readOnlyRootfs) {
+    private HostConfig createHostConfig(Path jobDir, long maxMemoryBytes, double cpuLimit, boolean readOnlyRootfs) {
         return HostConfig.newHostConfig()
                 .withBinds(Bind.parse(jobDir.toAbsolutePath() + ":/workspace"))
                 .withMemory(maxMemoryBytes)
-                .withCpuCount(cpuLimit)
+                .withNanoCPUs(toNanoCpus(cpuLimit))
                 .withNetworkMode("none")
                 .withPidsLimit(64L)
                 .withReadonlyRootfs(readOnlyRootfs)
                 .withCapDrop(Capability.ALL)
                 .withSecurityOpts(List.of("no-new-privileges"));
+    }
+
+    private static long toNanoCpus(double cpuLimit) {
+        if (!Double.isFinite(cpuLimit) || cpuLimit <= 0) {
+            throw new IllegalArgumentException(
+                    "CPU limit must be a positive finite number"
+            );
+        }
+
+        return Math.round(cpuLimit * 1_000_000_000L);
     }
 
     private ContainerResult executeContainer(String[] cmd, HostConfig hostConfig,

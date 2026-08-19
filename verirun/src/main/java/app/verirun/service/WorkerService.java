@@ -49,7 +49,7 @@ public class WorkerService {
     private final int buildTimeoutSeconds;
     private final int runTimeoutSeconds;
     private final long maxMemoryBytes;
-    private final long cpuLimit;
+    private final double cpuLimit;
     private final int maxLogSize;
     private final int jobTimeoutSeconds;
     private final int maxRetries;
@@ -65,7 +65,7 @@ public class WorkerService {
             @Value("${app.worker.build-timeout-seconds:120}") int buildTimeoutSeconds,
             @Value("${app.worker.run-timeout-seconds:60}") int runTimeoutSeconds,
             @Value("${app.worker.max-memory-bytes:536870912}") long maxMemoryBytes,
-            @Value("${app.worker.cpu-limit:1}") long cpuLimit,
+            @Value("${app.worker.cpu-limit:1}") double cpuLimit,
             @Value("${app.worker.max-log-size:100000}") int maxLogSize,
             @Value("${app.worker.job-timeout-seconds:180}") int jobTimeoutSeconds,
             @Value("${app.worker.max-retries:2}") int maxRetries) {
