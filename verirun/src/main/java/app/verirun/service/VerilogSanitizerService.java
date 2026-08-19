@@ -17,7 +17,7 @@ public class VerilogSanitizerService {
     private static final Pattern INCLUDE_PATTERN = Pattern.compile("`include\\s*[\"<][^\">]+[\">]");
 
     private static final Pattern DANGEROUS_TASKS_PATTERN = Pattern.compile(
-            "\\$(system|fopen|fclose|fgetc|ungetc|fgets|fscanf|fread|fseek|ftell|rewind|fflush|ferror|feof|fwrite|fdisplay|fmonitor|fstrobe|readmemh|readmemb|writememh|writememb)\\b"
+            "\\$(system|fopen|fwrite|fclose|fgetc|ungetc|fgets|fscanf|fread|fseek|ftell|rewind|fflush|ferror|feof|readmemh|readmemb)\\b"
     );
 
     public void sanitize(String code) {
