@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
+import java.util.UUID;
 
 @Service
 @Transactional(readOnly = true)
@@ -18,8 +19,8 @@ public class SimulationQueryService {
         this.jobRepository = jobRepository;
     }
 
-    public Optional<JobStatusResponse> getJobStatus(String jobId) {
-        return jobRepository.findByJobId(jobId).map(this::mapToResponse);
+    public Optional<JobStatusResponse> getJobStatus(String jobId, UUID userId) {
+        return jobRepository.findByJobIdAndOwner_Id(jobId, userId).map(this::mapToResponse);
     }
 
     private JobStatusResponse mapToResponse(SimulationJob job) {

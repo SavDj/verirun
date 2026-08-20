@@ -18,6 +18,10 @@ public interface SimulationJobRepository extends JpaRepository<SimulationJob, UU
 
     Optional<SimulationJob> findByJobId(String jobId);
 
+    Optional<SimulationJob> findByJobIdAndOwner_Id(String jobId, UUID ownerId);
+
+    boolean existsByJobIdAndOwner_Id(String jobId, UUID ownerId);
+
     @Modifying
     @Transactional
     @Query("UPDATE SimulationJob j SET j.status = 'RUNNING', j.startedAt = :now " +

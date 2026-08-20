@@ -13,8 +13,12 @@ public class SimulationJob {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(nullable = false)
+    @Column(nullable = false, unique = true)
     private String jobId;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "owner_id", nullable = false)
+    private User owner;
 
     @Column(nullable = false)
     private String directoryPath;
@@ -44,8 +48,9 @@ public class SimulationJob {
 
     public SimulationJob() {}
 
-    public SimulationJob(String jobId, String directoryPath, VerilatorOptions options) {
+    public SimulationJob(String jobId, String directoryPath, VerilatorOptions options, User owner) {
         this.jobId = jobId;
+        this.owner = owner;
         this.directoryPath = directoryPath;
         this.verilatorOptions = options;
         this.createdAt = Instant.now();
@@ -65,6 +70,10 @@ public class SimulationJob {
 
     public void setJobId(String jobId) {
         this.jobId = jobId;
+    }
+
+    public User getOwner() {
+        return owner;
     }
 
     public String getDirectoryPath() {
