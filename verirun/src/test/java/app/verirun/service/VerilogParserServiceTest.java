@@ -25,7 +25,7 @@ class VerilogParserServiceTest {
     }
 
     @Test
-    void resolveTopModule_shouldExtractModuleName_WhenValidModuleDeclared() throws IOException {
+    void resolveTopModule_shouldExtractModuleName_whenValidModuleDeclared() throws IOException {
         Path tb = tempDir.resolve("tb.sv");
         Files.writeString(tb, "module ALU_tb(input a, b); \n assign y = a & b; \n endmodule");
 
@@ -35,7 +35,7 @@ class VerilogParserServiceTest {
     }
 
     @Test
-    void resolveTopModule_shouldThrowIInvalidCodeException_WhenNoModuleDeclared() throws IOException {
+    void resolveTopModule_shouldThrowIInvalidCodeException_whenNoModuleDeclared() throws IOException {
         Path tb = tempDir.resolve("tb.sv");
         Files.writeString(tb, "// comment");
 
@@ -45,7 +45,7 @@ class VerilogParserServiceTest {
     }
 
     @Test
-    void resolveTopModule_shouldReturnDefault_WhenFileDoesNotExist() throws IOException {
+    void resolveTopModule_shouldReturnDefault_whenFileDoesNotExist() throws IOException {
         Path tb = tempDir.resolve("non_existent.sv");
 
         String moduleName = parser.resolveTopModule(tb);
@@ -54,7 +54,7 @@ class VerilogParserServiceTest {
     }
 
     @Test
-    void detectUvmUsage_shouldReturnTrue_WhenUvmMacrosPresent() throws IOException {
+    void detectUvmUsage_shouldReturnTrue_whenUvmMacrosPresent() throws IOException {
         Path tb = tempDir.resolve("tb.sv");
         Files.writeString(tb, "`include \"uvm_macros.svh\"\nmodule tb; endmodule");
 
@@ -64,7 +64,7 @@ class VerilogParserServiceTest {
     }
 
     @Test
-    void detectUvmUsage_shouldReturnFalse_WhenNoUvmReferences() throws IOException {
+    void detectUvmUsage_shouldReturnFalse_whenNoUvmReferences() throws IOException {
         Path tb = tempDir.resolve("tb.sv");
         Files.writeString(tb, "module tb; endmodule");
 
@@ -74,7 +74,7 @@ class VerilogParserServiceTest {
     }
 
     @Test
-    void detectUvmUsage_shouldReturnFalse_WhenUvmIsOnlyInComments() throws IOException {
+    void detectUvmUsage_shouldReturnFalse_whenUvmIsOnlyInComments() throws IOException {
         Path tb = tempDir.resolve("tb.sv");
         Files.writeString(tb, "// import uvm_pkg::*;\nmodule tb; endmodule");
 

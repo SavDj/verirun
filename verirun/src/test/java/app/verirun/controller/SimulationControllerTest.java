@@ -73,7 +73,7 @@ class SimulationControllerTest {
     }
 
     @Test
-    void runSimulation_shouldReturn200AndJobId_WhenValidRequest() throws IOException {
+    void runSimulation_shouldReturn200AndJobId_whenValidRequest() throws IOException {
         String validJson = """
             {
               "designCode": "module ALU(); endmodule",
@@ -97,7 +97,7 @@ class SimulationControllerTest {
     }
 
     @Test
-    void runSimulation_shouldReturn400BadRequest_WhenCodeIsTooLarge() {
+    void runSimulation_shouldReturn400BadRequest_whenCodeIsTooLarge() {
         String largeCode = "a".repeat(100_001);
         String invalidJson = String.format("""
             {
@@ -116,7 +116,7 @@ class SimulationControllerTest {
     }
 
     @Test
-    void getJobStatus_shouldReturn404_WhenJobNotFound() {
+    void getJobStatus_shouldReturn404_whenJobNotFound() {
         when(simulationQueryService.getJobStatus("missing-job", USER_ID)).thenReturn(Optional.empty());
 
         MvcTestResultAssert resultAssert = assertThat(mockMvcTester.get()

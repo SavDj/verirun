@@ -71,7 +71,7 @@ class WorkerServiceTest {
     }
 
     @Test
-    void recoverStuckJobs_shouldResetStatusAndEnqueue_WhenStuckJobsFound() {
+    void recoverStuckJobs_shouldResetStatusAndEnqueue_whenStuckJobsFound() {
         SimulationJob stuckJob = new SimulationJob("job-stuck", tempDir.resolve("job").toString(), null, owner);
         stuckJob.setStatus(SimulationJob.JobStatus.RUNNING);
         stuckJob.setStartedAt(Instant.now().minusSeconds(300));
@@ -88,7 +88,7 @@ class WorkerServiceTest {
     }
 
     @Test
-    void processJob_shouldSetStatusToFailed_WhenMaxRetriesExceeded() {
+    void processJob_shouldSetStatusToFailed_whenMaxRetriesExceeded() {
         SimulationJob job = new SimulationJob("job-fail", tempDir.resolve("job-fail").toString(), null, owner);
         job.setStatus(SimulationJob.JobStatus.PENDING);
         job.setRetryCount(2);

@@ -36,7 +36,7 @@ class UserServiceTest {
     private UserService userService;
 
     @Test
-    void register_shouldRegisterUserSuccessfully_WhenValidDTO() {
+    void register_shouldRegisterUserSuccessfully_whenValidDTO() {
         UserDTO dto = new UserDTO("new@verirun.com", "password123");
         User mockUser = new User(dto.email());
 
@@ -52,7 +52,7 @@ class UserServiceTest {
     }
 
     @Test
-    void register_shouldThrowIllegalArgumentException_WhenEmailAlreadyExists() {
+    void register_shouldThrowIllegalArgumentException_whenEmailAlreadyExists() {
         UserDTO dto = new UserDTO("existing@verirun.com", "password123");
         when(userRepository.existsByEmail(dto.email())).thenReturn(true);
 

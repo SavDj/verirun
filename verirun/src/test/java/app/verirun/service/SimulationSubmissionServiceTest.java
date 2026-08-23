@@ -79,7 +79,7 @@ class SimulationSubmissionServiceTest {
     }
 
     @Test
-    void createSimulationJob_shouldNotWriteTestbench_WhenCodeIsNull() throws Exception {
+    void createSimulationJob_shouldNotWriteTestbench_whenCodeIsNull() throws Exception {
         String designCode = "module CPU(); endmodule";
         SimulationRequest request = new SimulationRequest(designCode, null, null);
         when(userRepository.findById(userId)).thenReturn(Optional.of(owner));

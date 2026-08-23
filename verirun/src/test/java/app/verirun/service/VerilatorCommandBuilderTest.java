@@ -32,7 +32,7 @@ class VerilatorCommandBuilderTest {
     class BuildCommandTests {
 
         @Test
-        void buildCommand_shouldReturnBasicLintCommand_WhenLintOnlyMode() {
+        void buildCommand_shouldReturnBasicLintCommand_whenLintOnlyMode() {
             when(options.buildMode()).thenReturn(BuildMode.LINT_ONLY);
 
             String[] cmd = builder.buildCommand(options, "ALU", false, false);
@@ -43,7 +43,7 @@ class VerilatorCommandBuilderTest {
         }
 
         @Test
-        void buildCommand_shouldIncludeBinaryAndTraceFlags_WhenConfigured() {
+        void buildCommand_shouldIncludeBinaryAndTraceFlags_whenConfigured() {
             when(options.buildMode()).thenReturn(BuildMode.BINARY);
             when(options.parallelJobs()).thenReturn(4);
             when(options.optLevel()).thenReturn(OptimizationLevel.O3);
@@ -56,7 +56,7 @@ class VerilatorCommandBuilderTest {
         }
 
         @Test
-        void buildCommand_shouldAddInjectedUvmFlags_WhenUsesUvmIsTrue() {
+        void buildCommand_shouldAddInjectedUvmFlags_whenUsesUvmIsTrue() {
             when(options.buildMode()).thenReturn(BuildMode.CC_MODEL);
             when(options.parallelJobs()).thenReturn(2);
             when(options.optLevel()).thenReturn(OptimizationLevel.O0);
@@ -84,14 +84,14 @@ class VerilatorCommandBuilderTest {
     class SimulationCommandTests {
 
         @Test
-        void simulationCommand_shouldBuildCommandWithArgs_WhenArgsProvided() {
+        void simulationCommand_shouldBuildCommandWithArgs_whenArgsProvided() {
             String[] cmd = builder.simulationCommand("ALU", List.of("+vcd+trace", "+verbose"));
 
             assertThat(cmd).containsExactly("./obj_dir/VALU", "+vcd+trace", "+verbose");
         }
 
         @Test
-        void simulationCommand_shouldBuildCommandWithoutArgs_WhenArgsAreNull() {
+        void simulationCommand_shouldBuildCommandWithoutArgs_whenArgsAreNull() {
             String[] cmd = builder.simulationCommand("CPU", null);
 
             assertThat(cmd).containsExactly("./obj_dir/VCPU");

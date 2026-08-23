@@ -57,7 +57,7 @@ class AuthControllerTest {
     }
 
     @Test
-    void register_shouldReturn201Created_WhenEmailIsNew() throws Exception {
+    void register_shouldReturn201Created_whenEmailIsNew() throws Exception {
         UserDTO dto = new UserDTO("new@verirun.com", "securePassword123");
         when(userService.findByEmail(dto.email())).thenReturn(Optional.empty());
 
@@ -73,7 +73,7 @@ class AuthControllerTest {
     }
 
     @Test
-    void register_shouldReturn400BadRequest_WhenEmailAlreadyExists() throws Exception {
+    void register_shouldReturn400BadRequest_whenEmailAlreadyExists() throws Exception {
         UserDTO dto = new UserDTO("existing@verirun.com", "password123");
         User existingUser = new User("existing@verirun.com");
         when(userService.findByEmail(dto.email())).thenReturn(Optional.of(existingUser));
@@ -91,7 +91,7 @@ class AuthControllerTest {
 
     @Test
     @WithMockUser(roles = "REGISTERED_USER")
-    void login_shouldSetJwtCookie_WhenCredentialsAreValid() throws Exception {
+    void login_shouldSetJwtCookie_whenCredentialsAreValid() throws Exception {
         UserDTO dto = new UserDTO("user@verirun.com", "password123");
 
         Role mockRole = mock(Role.class);
