@@ -31,9 +31,7 @@ public class AuthController {
     private final AuthenticationManager authenticationManager;
     private final TokenUtil tokenUtil;
 
-    public AuthController(UserService userService,
-                          AuthenticationManager authenticationManager,
-                          TokenUtil tokenUtil) {
+    public AuthController(UserService userService, AuthenticationManager authenticationManager, TokenUtil tokenUtil) {
         this.userService = userService;
         this.authenticationManager = authenticationManager;
         this.tokenUtil = tokenUtil;
@@ -54,27 +52,21 @@ public class AuthController {
 
     @PostMapping("/login")
     public ResponseEntity<Void> login(@Valid @RequestBody UserDTO dto) {
-        Authentication authentication = authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(dto.email(), dto.password())
-        );
+        Authentication authentication = authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(dto.email(), dto.password()));
         SecurityContextHolder.getContext().setAuthentication(authentication);
 
         UserDetailsImpl userDetails = (UserDetailsImpl) authentication.getPrincipal();
         ResponseCookie cookie = tokenUtil.getCookie(userDetails);
 
         log.info("User {} logged in successfully", userDetails.getUsername());
-        return ResponseEntity.ok()
-                .header(HttpHeaders.SET_COOKIE, cookie.toString())
-                .build();
+        return ResponseEntity.ok().header(HttpHeaders.SET_COOKIE, cookie.toString()).build();
     }
 
     @PostMapping("/logout")
     public ResponseEntity<Void> logout() {
         ResponseCookie cleanCookie = tokenUtil.getCleanCookie();
         log.info("User logged out successfully");
-        return ResponseEntity.ok()
-                .header(HttpHeaders.SET_COOKIE, cleanCookie.toString())
-                .build();
+        return ResponseEntity.ok().header(HttpHeaders.SET_COOKIE, cleanCookie.toString()).build();
     }
 
     @RequestMapping(value = "/verify-account", method = {RequestMethod.GET, RequestMethod.POST})
@@ -94,10 +86,8 @@ public class AuthController {
     public ResponseEntity<?> checkAuthStatus() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
 
-        if (authentication != null && authentication.isAuthenticated() &&
-            authentication.getPrincipal() instanceof UserDetailsImpl userDetails) {
-            User user = userService.findByEmail(userDetails.getUsername())
-                    .orElseThrow(() -> new UsernameNotFoundException("User not found"));
+        if (authentication != null && authentication.isAuthenticated() && authentication.getPrincipal() instanceof UserDetailsImpl userDetails) {
+            User user = userService.findByEmail(userDetails.getUsername()).orElseThrow(() -> new UsernameNotFoundException("User not found"));
 
             return ResponseEntity.ok(new AuthStatusResponse(true, user.getEmail(), user.getId()));
         } else {

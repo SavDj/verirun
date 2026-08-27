@@ -19,11 +19,11 @@ import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.userdetails.UserDetailsService;
-import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import org.springframework.test.web.servlet.assertj.MvcTestResultAssert;
+import org.mockito.ArgumentCaptor;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -57,31 +57,25 @@ class AuthControllerTest {
     }
 
     @Test
-    void register_shouldReturn201Created_whenEmailIsNew() throws Exception {
+    void register_shouldReturn201CreatedWhenEmailIsNew() throws Exception {
         UserDTO dto = new UserDTO("new@verirun.com", "securePassword123");
         when(userService.findByEmail(dto.email())).thenReturn(Optional.empty());
 
-        MvcTestResultAssert resultAssert = assertThat(mockMvcTester.post()
-                .uri("/api/auth/register")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(dto)));
+        MvcTestResultAssert resultAssert = assertThat(mockMvcTester.post().uri("/api/auth/register").contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(dto)));
 
         resultAssert.hasStatus(HttpStatus.CREATED);
         resultAssert.bodyText().isEqualTo("Registration successful. Please verify your email.");
 
-        verify(userService, times(1)).register(dto);
+        verify(userService).register(dto);
     }
 
     @Test
-    void register_shouldReturn400BadRequest_whenEmailAlreadyExists() throws Exception {
+    void register_shouldReturn400BadRequestWhenEmailAlreadyExists() throws Exception {
         UserDTO dto = new UserDTO("existing@verirun.com", "password123");
         User existingUser = new User("existing@verirun.com");
         when(userService.findByEmail(dto.email())).thenReturn(Optional.of(existingUser));
 
-        MvcTestResultAssert resultAssert = assertThat(mockMvcTester.post()
-                .uri("/api/auth/register")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(dto)));
+        MvcTestResultAssert resultAssert = assertThat(mockMvcTester.post().uri("/api/auth/register").contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(dto)));
 
         resultAssert.hasStatus(HttpStatus.BAD_REQUEST);
         resultAssert.bodyText().isEqualTo("Email already registered!");
@@ -90,14 +84,13 @@ class AuthControllerTest {
     }
 
     @Test
-    @WithMockUser(roles = "REGISTERED_USER")
-    void login_shouldSetJwtCookie_whenCredentialsAreValid() throws Exception {
+    void login_shouldSetJwtCookieWhenCredentialsAreValid() throws Exception {
         UserDTO dto = new UserDTO("user@verirun.com", "password123");
 
-        Role mockRole = mock(Role.class);
-        when(mockRole.getAuthority()).thenReturn("ROLE_REGISTERED_USER");
+        Role role = new Role();
+        role.setName("REGISTERED_USER");
 
-        UserDetailsImpl mockUserDetails = new UserDetailsImpl(UUID.randomUUID(), "user@verirun.com", "password", mockRole);
+        UserDetailsImpl mockUserDetails = new UserDetailsImpl(UUID.randomUUID(), "user@verirun.com", "password", role);
         Authentication mockAuth = new UsernamePasswordAuthenticationToken(mockUserDetails, null, mockUserDetails.getAuthorities());
 
         when(authenticationManager.authenticate(any(UsernamePasswordAuthenticationToken.class))).thenReturn(mockAuth);
@@ -105,10 +98,7 @@ class AuthControllerTest {
         ResponseCookie dummyCookie = ResponseCookie.from("jwt", "dummy-token-value").httpOnly(true).build();
         when(tokenUtil.getCookie(mockUserDetails)).thenReturn(dummyCookie);
 
-        MvcTestResultAssert resultAssert = assertThat(mockMvcTester.post()
-                .uri("/api/auth/login")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(dto)));
+        MvcTestResultAssert resultAssert = assertThat(mockMvcTester.post().uri("/api/auth/login").contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(dto)));
 
         resultAssert.hasStatus(HttpStatus.OK);
         resultAssert.satisfies(result -> {
@@ -118,7 +108,10 @@ class AuthControllerTest {
             assertThat(jwtCookie.isHttpOnly()).isTrue();
         });
 
-        verify(authenticationManager, times(1)).authenticate(any(UsernamePasswordAuthenticationToken.class));
-        verify(tokenUtil, times(1)).getCookie(mockUserDetails);
+        ArgumentCaptor<UsernamePasswordAuthenticationToken> authenticationCaptor = ArgumentCaptor.forClass(UsernamePasswordAuthenticationToken.class);
+        verify(authenticationManager).authenticate(authenticationCaptor.capture());
+        assertThat(authenticationCaptor.getValue().getPrincipal()).isEqualTo(dto.email());
+        assertThat(authenticationCaptor.getValue().getCredentials()).isEqualTo(dto.password());
+        verify(tokenUtil).getCookie(mockUserDetails);
     }
 }

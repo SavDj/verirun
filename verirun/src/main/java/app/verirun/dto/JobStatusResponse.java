@@ -10,4 +10,5 @@ public record JobStatusResponse(
         Integer retryCount,
         String result,
         String buildMode
-) {}
+) {
+}

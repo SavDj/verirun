@@ -1,55 +1,55 @@
 package app.verirun.controller;
 
-import app.verirun.service.JobQueueService;
+import app.verirun.dto.JobStatusResponse;
+import app.verirun.dto.SimulationRequest;
 import app.verirun.entity.Role;
+import app.verirun.security.TokenAuthenticationFilter;
 import app.verirun.security.UserDetailsImpl;
 import app.verirun.service.SimulationArtifactService;
 import app.verirun.service.SimulationQueryService;
 import app.verirun.service.SimulationSubmissionService;
+import app.verirun.storage.SimulationStorageService.Output;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.core.io.Resource;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
-import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.FilterType;
+import org.springframework.context.annotation.Import;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors;
 import org.springframework.security.web.SecurityFilterChain;
-import app.verirun.security.TokenAuthenticationFilter;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
-import org.springframework.test.web.servlet.assertj.MvcTestResultAssert;
 
-import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
-@WebMvcTest(value = SimulationController.class,
-        excludeFilters = @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = TokenAuthenticationFilter.class))
+@WebMvcTest(value = SimulationController.class, excludeFilters = @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = TokenAuthenticationFilter.class))
 @Import(SimulationControllerTest.TestSecurityConfiguration.class)
 class SimulationControllerTest {
 
-    @Autowired
-    private MockMvc mockMvc;
-
-    private MockMvcTester mockMvcTester;
-
     private static final UUID USER_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
-    private UserDetailsImpl authenticatedUser;
+
+    @Autowired
+    private MockMvcTester mockMvcTester;
 
     @MockitoBean
     private SimulationSubmissionService simulationSubmissionService;
@@ -58,107 +58,165 @@ class SimulationControllerTest {
     private SimulationQueryService simulationQueryService;
 
     @MockitoBean
-    private JobQueueService jobQueueService;
-
-    @MockitoBean
     private SimulationArtifactService simulationArtifactService;
+
+    private UserDetailsImpl authenticatedUser;
 
     @BeforeEach
     void setUp() {
-        mockMvcTester = MockMvcTester.create(mockMvc);
-
         Role role = new Role();
         role.setName("REGISTERED_USER");
+
         authenticatedUser = new UserDetailsImpl(USER_ID, "user@verirun.com", "password", role);
     }
 
     @Test
-    void runSimulation_shouldReturn200AndJobId_whenValidRequest() throws IOException {
+    void runSimulation_shouldReturn200AndJobIdWhenValidRequest() {
         String validJson = """
-            {
-              "designCode": "module ALU(); endmodule",
-              "testbenchCode": null
-            }
-            """;
-        when(simulationSubmissionService.createSimulationJob(any(), eq(USER_ID))).thenReturn("job-123");
+                {
+                  "designCode": "module ALU(); endmodule",
+                  "testbenchCode": null
+                }
+                """;
 
-        MvcTestResultAssert resultAssert = assertThat(mockMvcTester.post()
-                .uri("/api/v1/simulate")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(validJson)
-                .with(SecurityMockMvcRequestPostProcessors.user(authenticatedUser)));
+        when(simulationSubmissionService.submitSimulation(any(), eq(USER_ID))).thenReturn("job-123");
 
-        resultAssert.hasStatus(HttpStatus.OK);
-        resultAssert.bodyJson().extractingPath("$.jobId").isEqualTo("job-123");
-        resultAssert.bodyJson().extractingPath("$.status").isEqualTo("PENDING");
+        var result = assertThat(mockMvcTester.post().uri("/api/v1/simulate").contentType(MediaType.APPLICATION_JSON).content(validJson).with(SecurityMockMvcRequestPostProcessors.user(authenticatedUser)));
 
-        verify(simulationSubmissionService, times(1)).createSimulationJob(any(), eq(USER_ID));
-        verify(jobQueueService, times(1)).enqueueJob("job-123");
+        result.hasStatus(HttpStatus.OK);
+        result.bodyJson().extractingPath("$.jobId").isEqualTo("job-123");
+        result.bodyJson().extractingPath("$.status").isEqualTo("PENDING");
+
+        ArgumentCaptor<SimulationRequest> requestCaptor = ArgumentCaptor.forClass(SimulationRequest.class);
+
+        verify(simulationSubmissionService).submitSimulation(requestCaptor.capture(), eq(USER_ID));
+
+        assertThat(requestCaptor.getValue().designCode()).isEqualTo("module ALU(); endmodule");
+        assertThat(requestCaptor.getValue().testbenchCode()).isNull();
     }
 
     @Test
-    void runSimulation_shouldReturn400BadRequest_whenCodeIsTooLarge() {
+    void runSimulation_shouldReturn400WhenDesignIsTooLarge() {
         String largeCode = "a".repeat(100_001);
         String invalidJson = String.format("""
-            {
-              "designCode": "%s",
-              "testbenchCode": null
-            }
-            """, largeCode);
+                {
+                  "designCode": "%s",
+                  "testbenchCode": null
+                }
+                """, largeCode);
 
-        MvcTestResultAssert resultAssert = assertThat(mockMvcTester.post()
-                .uri("/api/v1/simulate")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(invalidJson)
-                .with(SecurityMockMvcRequestPostProcessors.user(authenticatedUser)));
+        var result = assertThat(mockMvcTester.post().uri("/api/v1/simulate").contentType(MediaType.APPLICATION_JSON).content(invalidJson).with(SecurityMockMvcRequestPostProcessors.user(authenticatedUser)));
 
-        resultAssert.hasStatus(HttpStatus.BAD_REQUEST);
+        result.hasStatus(HttpStatus.BAD_REQUEST);
+        verifyNoInteractions(simulationSubmissionService);
     }
 
     @Test
-    void getJobStatus_shouldReturn404_whenJobNotFound() {
+    void runSimulation_shouldReturn400WhenDesignIsBlank() {
+        String invalidJson = """
+                {
+                  "designCode": "   ",
+                  "testbenchCode": null
+                }
+                """;
+
+        var result = assertThat(mockMvcTester.post().uri("/api/v1/simulate").contentType(MediaType.APPLICATION_JSON).content(invalidJson).with(SecurityMockMvcRequestPostProcessors.user(authenticatedUser)));
+
+        result.hasStatus(HttpStatus.BAD_REQUEST);
+        verifyNoInteractions(simulationSubmissionService);
+    }
+
+    @Test
+    void runSimulation_shouldReturn400WhenTestbenchIsTooLarge() {
+        String largeCode = "a".repeat(100_001);
+        String invalidJson = String.format("""
+                {
+                  "designCode": "module ALU(); endmodule",
+                  "testbenchCode": "%s"
+                }
+                """, largeCode);
+
+        var result = assertThat(mockMvcTester.post().uri("/api/v1/simulate").contentType(MediaType.APPLICATION_JSON).content(invalidJson).with(SecurityMockMvcRequestPostProcessors.user(authenticatedUser)));
+
+        result.hasStatus(HttpStatus.BAD_REQUEST);
+        verifyNoInteractions(simulationSubmissionService);
+    }
+
+    @Test
+    void runSimulation_shouldReturn403ForUserWithoutRegisteredUserRole() {
+        Role role = new Role();
+        role.setName("UNREGISTERED_USER");
+
+        UserDetailsImpl unauthorizedUser = new UserDetailsImpl(USER_ID, "user@verirun.com", "password", role);
+
+        String validJson = """
+                {
+                  "designCode": "module ALU(); endmodule",
+                  "testbenchCode": null
+                }
+                """;
+
+        var result = assertThat(mockMvcTester.post().uri("/api/v1/simulate").contentType(MediaType.APPLICATION_JSON).content(validJson).with(SecurityMockMvcRequestPostProcessors.user(unauthorizedUser)));
+
+        result.hasStatus(HttpStatus.FORBIDDEN);
+        verifyNoInteractions(simulationSubmissionService);
+    }
+
+    @Test
+    void getJobStatus_shouldReturn200WhenStatusAvailable() {
+        JobStatusResponse status = new JobStatusResponse("job-123", "RUNNING", "2026-08-24T12:00:00Z", "2026-08-24T12:00:01Z", null, null, 0, null, null);
+
+        when(simulationQueryService.getJobStatus("job-123", USER_ID)).thenReturn(Optional.of(status));
+
+        var result = assertThat(mockMvcTester.get().uri("/api/v1/jobs/job-123/status").with(SecurityMockMvcRequestPostProcessors.user(authenticatedUser)));
+
+        result.hasStatus(HttpStatus.OK);
+        result.bodyJson().extractingPath("$.jobId").isEqualTo("job-123");
+        result.bodyJson().extractingPath("$.status").isEqualTo("RUNNING");
+
+        verify(simulationQueryService).getJobStatus("job-123", USER_ID);
+    }
+
+    @Test
+    void getJobStatus_shouldReturn404WhenStatusUnavailable() {
         when(simulationQueryService.getJobStatus("missing-job", USER_ID)).thenReturn(Optional.empty());
 
-        MvcTestResultAssert resultAssert = assertThat(mockMvcTester.get()
-                .uri("/api/v1/jobs/missing-job/status")
-                .with(SecurityMockMvcRequestPostProcessors.user(authenticatedUser)));
+        var result = assertThat(mockMvcTester.get().uri("/api/v1/jobs/missing-job/status").with(SecurityMockMvcRequestPostProcessors.user(authenticatedUser)));
 
-        resultAssert.hasStatus(HttpStatus.NOT_FOUND);
+        result.hasStatus(HttpStatus.NOT_FOUND);
+
         verify(simulationQueryService).getJobStatus("missing-job", USER_ID);
     }
 
     @Test
-    void downloadModel_shouldPreserveResponseHeadersForOwnedArtifact() {
-        Resource resource = mock(Resource.class);
-        when(simulationArtifactService.downloadArtifact("job-123", USER_ID, "model.zip"))
-                .thenReturn(Optional.of(resource));
+    void downloadModel_shouldReturnOwnedArtifactWithDownloadHeaders() {
+        byte[] model = "model bytes".getBytes(StandardCharsets.UTF_8);
+        ByteArrayResource resource = new ByteArrayResource(model);
 
-        MvcTestResultAssert resultAssert = assertThat(mockMvcTester.get()
-                .uri("/api/v1/simulate/download/job-123")
-                .with(SecurityMockMvcRequestPostProcessors.user(authenticatedUser)));
+        when(simulationArtifactService.downloadArtifact("job-123", USER_ID, Output.MODEL)).thenReturn(Optional.of(resource));
 
-        resultAssert.hasStatus(HttpStatus.OK);
-        resultAssert.satisfies(result -> {
-            assertThat(result.getResponse().getHeader("Content-Disposition"))
-                    .isEqualTo("attachment; filename=\"verilator_model_job-123.zip\"");
-            assertThat(result.getResponse().getHeader("Cache-Control"))
-                    .isEqualTo("private, max-age=3600");
-            assertThat(result.getResponse().getContentType()).isEqualTo(MediaType.APPLICATION_OCTET_STREAM_VALUE);
+        var result = assertThat(mockMvcTester.get().uri("/api/v1/simulate/download/job-123").with(SecurityMockMvcRequestPostProcessors.user(authenticatedUser)));
+
+        result.hasStatus(HttpStatus.OK);
+        result.satisfies(mvcResult -> {
+            assertThat(mvcResult.getResponse().getHeader("Content-Disposition")).isEqualTo("attachment; filename=\"verilator_model_job-123.zip\"");
+            assertThat(mvcResult.getResponse().getHeader("Cache-Control")).contains("private", "max-age=3600");
+            assertThat(mvcResult.getResponse().getContentType()).isEqualTo(MediaType.APPLICATION_OCTET_STREAM_VALUE);
+            assertThat(mvcResult.getResponse().getContentAsByteArray()).isEqualTo(model);
         });
-        verify(simulationArtifactService).downloadArtifact("job-123", USER_ID, "model.zip");
+
+        verify(simulationArtifactService).downloadArtifact("job-123", USER_ID, Output.MODEL);
     }
 
     @Test
-    void downloadWaveform_shouldReturn404ForUnownedArtifact() {
-        when(simulationArtifactService.downloadArtifact("job-123", USER_ID, "waveform.vcd"))
-                .thenReturn(Optional.empty());
+    void downloadWaveform_shouldReturn404WhenArtifactUnavailable() {
+        when(simulationArtifactService.downloadArtifact("job-123", USER_ID, Output.WAVEFORM)).thenReturn(Optional.empty());
 
-        MvcTestResultAssert resultAssert = assertThat(mockMvcTester.get()
-                .uri("/api/v1/simulate/download-waveform/job-123")
-                .with(SecurityMockMvcRequestPostProcessors.user(authenticatedUser)));
+        var result = assertThat(mockMvcTester.get().uri("/api/v1/simulate/download-waveform/job-123").with(SecurityMockMvcRequestPostProcessors.user(authenticatedUser)));
 
-        resultAssert.hasStatus(HttpStatus.NOT_FOUND);
-        verify(simulationArtifactService).downloadArtifact("job-123", USER_ID, "waveform.vcd");
+        result.hasStatus(HttpStatus.NOT_FOUND);
+
+        verify(simulationArtifactService).downloadArtifact("job-123", USER_ID, Output.WAVEFORM);
     }
 
     @TestConfiguration(proxyBeanMethods = false)
@@ -168,11 +226,9 @@ class SimulationControllerTest {
 
         @Bean
         SecurityFilterChain testSecurityFilterChain(HttpSecurity http) throws Exception {
-            http
-                    .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
-                    .csrf(AbstractHttpConfigurer::disable);
+            http.authorizeHttpRequests(auth -> auth.anyRequest().authenticated()).csrf(AbstractHttpConfigurer::disable);
+
             return http.build();
         }
     }
-
 }

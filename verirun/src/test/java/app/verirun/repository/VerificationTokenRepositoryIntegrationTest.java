@@ -31,17 +31,7 @@ class VerificationTokenRepositoryIntegrationTest {
     private EntityManager entityManager;
 
     @Test
-    void save_shouldGenerateIdentifierForPersistedToken() {
-        User user = persistUser("generated-token-owner@verirun.com");
-        VerificationToken token = new VerificationToken(user);
-
-        tokenRepository.saveAndFlush(token);
-
-        assertThat(token.getId()).isNotNull();
-    }
-
-    @Test
-    void findById_shouldReloadPersistedUserRelationship() {
+    void findById_shouldReloadGeneratedTokenAndUserRelationship() {
         User user = persistUser("relationship-token-owner@verirun.com");
         VerificationToken token = new VerificationToken(user);
         tokenRepository.saveAndFlush(token);
@@ -60,8 +50,7 @@ class VerificationTokenRepositoryIntegrationTest {
         tokenRepository.saveAndFlush(first);
         VerificationToken second = new VerificationToken(user);
 
-        assertThatThrownBy(() -> tokenRepository.saveAndFlush(second))
-                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> tokenRepository.saveAndFlush(second)).isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test
@@ -74,8 +63,18 @@ class VerificationTokenRepositoryIntegrationTest {
         VerificationToken second = new VerificationToken(secondUser);
         second.setToken("duplicate-confirmation-token");
 
-        assertThatThrownBy(() -> tokenRepository.saveAndFlush(second))
-                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> tokenRepository.saveAndFlush(second)).isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void save_shouldAllowDistinctGeneratedTokensForDifferentUsers() {
+        User firstUser = persistUser("distinct-token-first@verirun.com");
+        User secondUser = persistUser("distinct-token-second@verirun.com");
+
+        tokenRepository.saveAndFlush(new VerificationToken(firstUser));
+        tokenRepository.saveAndFlush(new VerificationToken(secondUser));
+
+        assertThat(tokenRepository.count()).isEqualTo(2);
     }
 
     private User persistUser(String email) {

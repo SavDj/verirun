@@ -29,10 +29,10 @@ public interface SimulationJobRepository extends JpaRepository<SimulationJob, UU
     int claimJob(@Param("jobId") String jobId, @Param("now") Instant now);
 
     @Query("""
-        SELECT j FROM SimulationJob j
-        WHERE j.status = 'RUNNING'
-          AND j.startedAt IS NOT NULL
-          AND j.startedAt <= :cutoff
-    """)
+                SELECT j FROM SimulationJob j
+                WHERE j.status = 'RUNNING'
+                  AND j.startedAt IS NOT NULL
+                  AND j.startedAt <= :cutoff
+            """)
     List<SimulationJob> findStuckJobs(@Param("cutoff") Instant cutoff);
 }

@@ -3,19 +3,14 @@ package app.verirun.service;
 import app.verirun.dto.SimulationRequest;
 import app.verirun.entity.SimulationJob;
 import app.verirun.entity.User;
-import app.verirun.repository.SimulationJobRepository;
 import app.verirun.repository.UserRepository;
+import app.verirun.storage.SimulationStorageService;
+import app.verirun.storage.SimulationStorageService.Input;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.util.FileSystemUtils;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.util.EnumSet;
 import java.util.UUID;
 
 @Service
@@ -23,67 +18,70 @@ public class SimulationSubmissionService {
 
     private static final Logger log = LoggerFactory.getLogger(SimulationSubmissionService.class);
 
-    private final SimulationJobRepository jobRepository;
     private final UserRepository userRepository;
     private final VerilogSanitizerService sanitizer;
-    private final Path workspaceBasePath;
+    private final SimulationStorageService storageService;
+    private final SimulationJobPersistenceService persistenceService;
+    private final JobQueueService jobQueueService;
 
-    public SimulationSubmissionService(
-            SimulationJobRepository jobRepository,
-            UserRepository userRepository,
-            VerilogSanitizerService sanitizer,
-            @Value("${app.workspace.base-path:./verirun-workspace}") String workspaceBasePath) {
-        this.jobRepository = jobRepository;
+    public SimulationSubmissionService(UserRepository userRepository, VerilogSanitizerService sanitizer, SimulationStorageService storageService, SimulationJobPersistenceService persistenceService, JobQueueService jobQueueService) {
         this.userRepository = userRepository;
         this.sanitizer = sanitizer;
-        this.workspaceBasePath = Paths.get(workspaceBasePath);
+        this.storageService = storageService;
+        this.persistenceService = persistenceService;
+        this.jobQueueService = jobQueueService;
     }
 
-    public String createSimulationJob(SimulationRequest request, UUID userId) throws IOException {
-        User owner = userRepository.findById(userId)
-                .orElseThrow(() -> new IllegalStateException("Authenticated user not found: " + userId));
+    public String submitSimulation(SimulationRequest request, UUID userId) {
+        User owner = userRepository.findById(userId).orElseThrow(() -> new IllegalStateException("Authenticated user not found: " + userId));
 
         sanitizer.sanitize(request.designCode());
-        if (request.testbenchCode() != null) {
-            sanitizer.sanitize(request.testbenchCode());
-        }
+        sanitizer.sanitize(request.testbenchCode());
 
-        String jobId = UUID.randomUUID().toString();
-        Path jobDir = createJobDirectory(jobId);
+        boolean testbenchExpected = request.testbenchCode() != null && !request.testbenchCode().isBlank();
+
+        UUID jobId = UUID.randomUUID();
+        EnumSet<Input> attemptedInputs = EnumSet.noneOf(Input.class);
+
+        SimulationJob job = new SimulationJob(jobId.toString(), testbenchExpected, request.resolvedOptions(), owner);
 
         try {
-            SimulationJob job = new SimulationJob(jobId, jobDir.toString(), request.resolvedOptions(), owner);
+            attemptedInputs.add(Input.DESIGN);
+            storageService.writeInput(jobId, Input.DESIGN, request.designCode());
 
-            Files.write(jobDir.resolve("design.sv"), request.designCode().getBytes(StandardCharsets.UTF_8));
-            if (request.testbenchCode() != null && !request.testbenchCode().isBlank()) {
-                Files.write(jobDir.resolve("testbench.sv"), request.testbenchCode().getBytes(StandardCharsets.UTF_8));
+            if (testbenchExpected) {
+                attemptedInputs.add(Input.TESTBENCH);
+                storageService.writeInput(jobId, Input.TESTBENCH, request.testbenchCode());
             }
-
-            jobRepository.save(job);
-
-            log.info("Created local scratchpad for job: {}", jobId);
-            return jobId;
-        } catch (Exception e) {
-            log.error("Failed to create simulation job {}, cleaning up orphaned scratchpad", jobId, e);
-            FileSystemUtils.deleteRecursively(jobDir);
+        } catch (RuntimeException e) {
+            cleanupAttemptedInputs(jobId, attemptedInputs);
             throw e;
         }
+
+        switch (persistenceService.persistNewJob(job)) {
+            case COMMITTED -> {
+            }
+            case DEFINITELY_NOT_CREATED -> {
+                cleanupAttemptedInputs(jobId, attemptedInputs);
+                throw new IllegalStateException("Simulation job could not be created");
+            }
+            case COMMIT_AMBIGUOUS -> throw new IllegalStateException("Simulation job creation could not be confirmed");
+        }
+
+        if (jobQueueService.enqueueJob(jobId.toString()) != JobQueueService.PublicationResult.CONFIRMED) {
+            throw new IllegalStateException("Simulation job publication could not be confirmed");
+        }
+
+        return jobId.toString();
     }
 
-    private Path createJobDirectory(String jobId) throws IOException {
-        if (!Files.exists(workspaceBasePath)) {
-            Files.createDirectories(workspaceBasePath);
-            log.debug("Created base workspace directory: {}", workspaceBasePath);
+    private void cleanupAttemptedInputs(UUID jobId, EnumSet<Input> attemptedInputs) {
+        for (Input input : attemptedInputs) {
+            try {
+                storageService.deleteInput(jobId, input);
+            } catch (RuntimeException cleanupFailure) {
+                log.warn("Failed to clean up unaccepted {} input for job {}", input.fileName(), jobId, cleanupFailure);
+            }
         }
-
-        Path realBaseDir = workspaceBasePath.toRealPath();
-        Path jobDir = realBaseDir.resolve(jobId).normalize();
-
-        if (!jobDir.startsWith(realBaseDir)) {
-            throw new SecurityException("Invalid job directory path: escapes workspace base");
-        }
-
-        Files.createDirectories(jobDir);
-        return jobDir;
     }
 }

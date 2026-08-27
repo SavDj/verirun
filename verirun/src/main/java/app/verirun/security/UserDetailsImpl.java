@@ -23,13 +23,16 @@ public class UserDetailsImpl implements UserDetails {
         this.password = password;
         this.role = role;
     }
+
     public static UserDetailsImpl getUserDetailsFromUser(User user) {
         return new UserDetailsImpl(user.getId(), user.getEmail(), user.getPasswordHash(), user.getRole());
     }
+
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         return Collections.singletonList(new SimpleGrantedAuthority(this.role.getAuthority()));
     }
+
     public UUID getId() {
         return id;
     }
@@ -38,6 +41,7 @@ public class UserDetailsImpl implements UserDetails {
     public String getPassword() {
         return password;
     }
+
     @Override
     public String getUsername() {
         return email;

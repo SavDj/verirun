@@ -2,6 +2,7 @@ package app.verirun.entity;
 
 import app.verirun.dto.VerilatorOptions;
 import jakarta.persistence.*;
+
 import java.time.Instant;
 import java.util.UUID;
 
@@ -20,8 +21,8 @@ public class SimulationJob {
     @JoinColumn(name = "owner_id", nullable = false)
     private User owner;
 
-    @Column(nullable = false)
-    private String directoryPath;
+    @Column(name = "testbench_expected", nullable = false)
+    private boolean testbenchExpected;
 
     @Column(nullable = false)
     private Instant createdAt;
@@ -46,12 +47,13 @@ public class SimulationJob {
     @Column(columnDefinition = "TEXT")
     private VerilatorOptions verilatorOptions;
 
-    public SimulationJob() {}
+    public SimulationJob() {
+    }
 
-    public SimulationJob(String jobId, String directoryPath, VerilatorOptions options, User owner) {
+    public SimulationJob(String jobId, boolean testbenchExpected, VerilatorOptions options, User owner) {
         this.jobId = jobId;
         this.owner = owner;
-        this.directoryPath = directoryPath;
+        this.testbenchExpected = testbenchExpected;
         this.verilatorOptions = options;
         this.createdAt = Instant.now();
     }
@@ -76,12 +78,12 @@ public class SimulationJob {
         return owner;
     }
 
-    public String getDirectoryPath() {
-        return directoryPath;
+    public boolean isTestbenchExpected() {
+        return testbenchExpected;
     }
 
-    public void setDirectoryPath(String directoryPath) {
-        this.directoryPath = directoryPath;
+    public void setTestbenchExpected(boolean testbenchExpected) {
+        this.testbenchExpected = testbenchExpected;
     }
 
     public Instant getCreatedAt() {

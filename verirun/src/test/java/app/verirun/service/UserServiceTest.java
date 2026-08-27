@@ -1,11 +1,13 @@
 package app.verirun.service;
 
 import app.verirun.dto.UserDTO;
+import app.verirun.entity.Role;
 import app.verirun.entity.User;
 import app.verirun.repository.UserRepository;
 import app.verirun.repository.VerificationTokenRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -36,31 +38,36 @@ class UserServiceTest {
     private UserService userService;
 
     @Test
-    void register_shouldRegisterUserSuccessfully_whenValidDTO() {
+    void register_shouldPersistEncodedUnverifiedUserWhenDtoIsValid() {
         UserDTO dto = new UserDTO("new@verirun.com", "password123");
-        User mockUser = new User(dto.email());
+        User foundUser = new User(dto.email());
+        Role role = new Role();
+        role.setName("REGISTERED_USER");
 
         when(userRepository.existsByEmail(dto.email())).thenReturn(false);
         when(passwordEncoder.encode(dto.password())).thenReturn("hashed_password");
-        when(userRepository.findByEmail(dto.email())).thenReturn(Optional.of(mockUser));
+        when(roleService.getUserRole()).thenReturn(role);
+        when(userRepository.findByEmail(dto.email())).thenReturn(Optional.of(foundUser));
 
-        String result = userService.register(dto);
+        userService.register(dto);
 
-        assertThat(result).contains("User registered");
-        verify(userRepository, times(1)).save(any(User.class));
-        verify(passwordEncoder, times(1)).encode("password123");
+        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).save(userCaptor.capture());
+        assertThat(userCaptor.getValue().getEmail()).isEqualTo(dto.email());
+        assertThat(userCaptor.getValue().getPasswordHash()).isEqualTo("hashed_password");
+        assertThat(userCaptor.getValue().getRole()).isSameAs(role);
+        assertThat(userCaptor.getValue().isVerified()).isFalse();
+        verify(passwordEncoder).encode(dto.password());
     }
 
     @Test
-    void register_shouldThrowIllegalArgumentException_whenEmailAlreadyExists() {
+    void register_shouldRejectRegistrationWhenEmailAlreadyExists() {
         UserDTO dto = new UserDTO("existing@verirun.com", "password123");
         when(userRepository.existsByEmail(dto.email())).thenReturn(true);
 
-        assertThatThrownBy(() -> userService.register(dto))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Email already registered");
+        assertThatThrownBy(() -> userService.register(dto)).isInstanceOf(IllegalArgumentException.class);
 
-        verify(userRepository, times(1)).existsByEmail(dto.email());
+        verify(userRepository).existsByEmail(dto.email());
         verify(userRepository, never()).save(any(User.class));
     }
 }

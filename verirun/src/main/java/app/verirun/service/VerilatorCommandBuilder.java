@@ -12,9 +12,7 @@ import java.util.regex.Pattern;
 
 @Service
 public class VerilatorCommandBuilder {
-    private static final Pattern DANGEROUS_EXTRA_FLAGS = Pattern.compile(
-            "(-CFLAGS|-LDFLAGS|-LDLIBS|--exe|--build|--make)"
-    );
+    private static final Pattern DANGEROUS_EXTRA_FLAGS = Pattern.compile("(-CFLAGS|-LDFLAGS|-LDLIBS|--exe|--build|--make)");
 
     private final String uvmHome;
 

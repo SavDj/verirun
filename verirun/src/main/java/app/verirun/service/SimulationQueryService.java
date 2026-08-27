@@ -33,15 +33,9 @@ public class SimulationQueryService {
         }
 
         return new JobStatusResponse(
-                job.getJobId(),
-                job.getStatus().name(),
-                job.getCreatedAt().toString(),
-                job.getStartedAt() != null ? job.getStartedAt().toString() : null,
-                job.getCompletedAt() != null ? job.getCompletedAt().toString() : null,
-                job.getErrorMessage(),
-                job.getRetryCount(),
-                result,
-                buildMode
+                job.getJobId(), job.getStatus().name(), job.getCreatedAt().toString(),
+                job.getStartedAt() != null ? job.getStartedAt().toString() : null, job.getCompletedAt() != null ? job.getCompletedAt().toString() : null,
+                job.getErrorMessage(), job.getRetryCount(), result, buildMode
         );
     }
 }

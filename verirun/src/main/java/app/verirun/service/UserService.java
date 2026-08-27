@@ -27,9 +27,7 @@ public class UserService {
     @Value("${app.verification.base-url:}")
     private String baseUrl;
 
-    public UserService(UserRepository userRepository,
-                       PasswordEncoder passwordEncoder, VerificationTokenRepository verificationTokenRepository, RoleService roleService,
-                       EmailService emailService) {
+    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder, VerificationTokenRepository verificationTokenRepository, RoleService roleService, EmailService emailService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.verificationTokenRepository = verificationTokenRepository;
@@ -84,8 +82,7 @@ public class UserService {
             return false;
         }
 
-        User user = userRepository.findByEmail(verificationToken.getUser().getEmail())
-                .orElseThrow(() -> new UsernameNotFoundException("Email not registered"));
+        User user = userRepository.findByEmail(verificationToken.getUser().getEmail()).orElseThrow(() -> new UsernameNotFoundException("Email not registered"));
         if (user == null) {
             log.warn("Verification failed: no user found for token {}", token);
             return false;

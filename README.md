@@ -1,24 +1,24 @@
 # VeriRun
 
-A web-based Verilog simulation platform that uses Verilator to allow users to run simulations in a containerized environment.
+A web-based Verilog simulation platform that uses Verilator to run simulations in a containerized environment.
 
 ## Prerequisites
 
-- Java 21 & Maven
+- Java 21
 - Docker
--  PostgreSQL
--  Redis
--  S3-compatible storage
+- PostgreSQL
+- Redis
+- S3-compatible storage
 
-### 1. Start the backend
+## Backend
 
 Configure your database, Redis, and AWS credentials in `src/main/resources/application.properties`, then run:
 
 ```bash
-mvnw spring-boot:run
+./mvnw spring-boot:run
 ```
 
-### 1. Start the frontend
+## Frontend
 
 ```bash
 cd frontend

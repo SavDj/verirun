@@ -15,10 +15,6 @@ public class VerilogParserService {
 
     private static final Pattern MODULE_PATTERN = Pattern.compile("module\\s+([a-zA-Z_][a-zA-Z0-9_]*)");
 
-    private static final Pattern UVM_INCLUDE_PATTERN = Pattern.compile(
-            "^\\s*`include\\s*[\"<]uvm", Pattern.MULTILINE
-    );
-
     private final VerilogSanitizerService sanitizer;
 
     public VerilogParserService(VerilogSanitizerService sanitizer) {
@@ -43,14 +39,8 @@ public class VerilogParserService {
 
         String code = Files.readString(testbenchPath, StandardCharsets.UTF_8);
 
-        if (UVM_INCLUDE_PATTERN.matcher(code).find()) {
-            return true;
-        }
-
         String nakedCode = sanitizer.stripCommentsAndStrings(code).toLowerCase();
 
-        return nakedCode.contains("uvm_pkg") ||
-                nakedCode.contains("`uvm") ||
-                nakedCode.contains("import uvm_pkg");
+        return nakedCode.contains("uvm_pkg") || nakedCode.contains("`uvm");
     }
 }

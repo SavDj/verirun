@@ -6,9 +6,10 @@ import app.verirun.dto.JobMessage;
 import app.verirun.dto.VerilatorOptions;
 import app.verirun.dto.VerilatorOptions.BuildMode;
 import app.verirun.entity.SimulationJob;
+import app.verirun.exception.InputMaterializationException;
 import app.verirun.repository.SimulationJobRepository;
-import app.verirun.storage.ArtifactStorageService;
-import com.fasterxml.jackson.core.JsonProcessingException;
+import app.verirun.storage.SimulationStorageService;
+import app.verirun.storage.SimulationStorageService.Output;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.sonus21.rqueue.annotation.RqueueListener;
 import org.slf4j.Logger;
@@ -17,17 +18,14 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.springframework.util.FileSystemUtils;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.time.Instant;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -42,10 +40,11 @@ public class WorkerService {
     private final SimulationJobRepository jobRepository;
     private final VerilatorCommandBuilder commandBuilder;
     private final VerilogParserService parserService;
-    private final ArtifactStorageService storageService;
+    private final SimulationStorageService storageService;
     private final JobQueueService jobQueueService;
+    private final WorkerWorkspaceService workspaceService;
+    private final SimulationInputMaterializer inputMaterializer;
 
-    private final Path workspaceBasePath;
     private final int buildTimeoutSeconds;
     private final int runTimeoutSeconds;
     private final long maxMemoryBytes;
@@ -54,21 +53,9 @@ public class WorkerService {
     private final int jobTimeoutSeconds;
     private final int maxRetries;
 
-    public WorkerService(
-            DockerExecutor dockerExecutor,
-            SimulationJobRepository jobRepository,
-            VerilatorCommandBuilder commandBuilder,
-            VerilogParserService parserService,
-            ArtifactStorageService storageService,
-            JobQueueService jobQueueService,
-            @Value("${app.workspace.base-path:./verirun-workspace}") String workspaceBasePath,
-            @Value("${app.worker.build-timeout-seconds:120}") int buildTimeoutSeconds,
-            @Value("${app.worker.run-timeout-seconds:60}") int runTimeoutSeconds,
-            @Value("${app.worker.max-memory-bytes:536870912}") long maxMemoryBytes,
-            @Value("${app.worker.cpu-limit:1}") double cpuLimit,
-            @Value("${app.worker.max-log-size:100000}") int maxLogSize,
-            @Value("${app.worker.job-timeout-seconds:180}") int jobTimeoutSeconds,
-            @Value("${app.worker.max-retries:2}") int maxRetries) {
+    public WorkerService(DockerExecutor dockerExecutor, SimulationJobRepository jobRepository, VerilatorCommandBuilder commandBuilder, VerilogParserService parserService, SimulationStorageService storageService, JobQueueService jobQueueService,
+                         WorkerWorkspaceService workspaceService, SimulationInputMaterializer inputMaterializer, @Value("${app.worker.build-timeout-seconds:120}") int buildTimeoutSeconds, @Value("${app.worker.run-timeout-seconds:60}") int runTimeoutSeconds, @Value("${app.worker.max-memory-bytes:536870912}") long maxMemoryBytes,
+                         @Value("${app.worker.cpu-limit:1}") double cpuLimit, @Value("${app.worker.max-log-size:100000}") int maxLogSize, @Value("${app.worker.job-timeout-seconds:180}") int jobTimeoutSeconds, @Value("${app.worker.max-retries:2}") int maxRetries) {
 
         this.dockerExecutor = dockerExecutor;
         this.jobRepository = jobRepository;
@@ -76,7 +63,8 @@ public class WorkerService {
         this.parserService = parserService;
         this.storageService = storageService;
         this.jobQueueService = jobQueueService;
-        this.workspaceBasePath = Paths.get(workspaceBasePath);
+        this.workspaceService = workspaceService;
+        this.inputMaterializer = inputMaterializer;
         this.buildTimeoutSeconds = buildTimeoutSeconds;
         this.runTimeoutSeconds = runTimeoutSeconds;
         this.maxMemoryBytes = maxMemoryBytes;
@@ -86,7 +74,7 @@ public class WorkerService {
         this.maxRetries = maxRetries;
     }
 
-    @RqueueListener(value = "${app.queue.job-name}", numRetries = "${app.worker.max-retries:2}")
+    @RqueueListener(value = "${app.queue.job-name:verirun:job-queue}", numRetries = "${app.worker.max-retries:2}")
     public void processJob(JobMessage message) throws IOException {
         String jobId = message.getJobId();
         Optional<SimulationJob> jobOpt = jobRepository.findByJobId(jobId);
@@ -98,13 +86,14 @@ public class WorkerService {
 
         SimulationJob job = jobOpt.get();
 
-        if (job.getStatus() == SimulationJob.JobStatus.COMPLETED ||
-                job.getStatus() == SimulationJob.JobStatus.FAILED) {
+        if (job.getStatus() == SimulationJob.JobStatus.COMPLETED || job.getStatus() == SimulationJob.JobStatus.FAILED) {
             log.info("Job {} already in terminal state {}, skipping", jobId, job.getStatus());
             return;
         }
 
-        int claimed = jobRepository.claimJob(jobId, Instant.now());
+        Instant startedAt = Instant.now();
+        int claimed = jobRepository.claimJob(jobId, startedAt);
+
         if (claimed == 0) {
             log.warn("Job {} was already claimed by another worker or is not in PENDING state", jobId);
             return;
@@ -113,25 +102,31 @@ public class WorkerService {
         log.info("Successfully claimed and processing job {}", jobId);
 
         job.setStatus(SimulationJob.JobStatus.RUNNING);
-        job.setStartedAt(Instant.now());
+        job.setStartedAt(startedAt);
+
+        Path attemptWorkspace = null;
 
         try {
-            ContainerResult result = executeSimulation(job);
-            uploadArtifactsToS3(Paths.get(job.getDirectoryPath()), job.getJobId(), result);
+            attemptWorkspace = workspaceService.createAttemptWorkspace();
+
+            UUID durableJobId = UUID.fromString(jobId);
+            inputMaterializer.materialize(durableJobId, job.isTestbenchExpected(), attemptWorkspace);
+
+            ContainerResult result = executeSimulation(job, attemptWorkspace);
+            uploadArtifacts(attemptWorkspace, durableJobId, result);
 
             job.setStatus(SimulationJob.JobStatus.COMPLETED);
-            job.setResultJson(resultToJson(result));
+            job.setResultJson(MAPPER.writeValueAsString(result));
             job.setCompletedAt(Instant.now());
             jobRepository.save(job);
 
-            log.info("Job {} completed and uploaded to S3", jobId);
-
+            log.info("Job {} completed and uploaded to storage", jobId);
         } catch (Exception e) {
             log.error("Job {} failed", jobId, e);
             handleJobFailure(job, e);
             throw e;
         } finally {
-            deleteLocalDirectory(Paths.get(job.getDirectoryPath()));
+            cleanupAttemptWorkspace(attemptWorkspace, jobId);
         }
     }
 
@@ -142,12 +137,18 @@ public class WorkerService {
 
         for (SimulationJob job : stuckJobs) {
             log.warn("Recovering stuck job {} (running since {})", job.getJobId(), job.getStartedAt());
+
             job.setStatus(SimulationJob.JobStatus.PENDING);
             job.setStartedAt(null);
             jobRepository.save(job);
 
-            jobQueueService.enqueueJob(job.getJobId());
-            log.info("Re-enqueued stuck job {}", job.getJobId());
+            JobQueueService.PublicationResult publicationResult = jobQueueService.enqueueJob(job.getJobId());
+
+            if (publicationResult == JobQueueService.PublicationResult.CONFIRMED) {
+                log.info("Re-enqueued stuck job {}", job.getJobId());
+            } else {
+                log.warn("Queue publication was not confirmed for recovered stuck job {}", job.getJobId());
+            }
         }
     }
 
@@ -158,48 +159,35 @@ public class WorkerService {
             job.setRetryCount(retryCount + 1);
             job.setStatus(SimulationJob.JobStatus.PENDING);
             job.setStartedAt(null);
+            job.setCompletedAt(null);
+
             log.warn("Job {} failed, retrying (attempt {}/{})", job.getJobId(), retryCount + 1, maxRetries);
         } else {
             job.setStatus(SimulationJob.JobStatus.FAILED);
-            job.setErrorMessage(Optional.ofNullable(e.getMessage()).orElse(e.getClass().getSimpleName()));
+            job.setErrorMessage(permanentErrorMessage(e));
             job.setCompletedAt(Instant.now());
+
             log.error("Job {} failed permanently after {} retries", job.getJobId(), maxRetries, e);
         }
 
         jobRepository.save(job);
     }
 
-    private String resultToJson(ContainerResult result) {
-        try {
-            return MAPPER.writeValueAsString(result);
-        } catch (JsonProcessingException e) {
-            log.error("Failed to serialize result", e);
-            return "{\"passed\":false,\"logs\":\"Serialization error\",\"exitCode\":-1}";
+    private String permanentErrorMessage(Exception exception) {
+        if (exception instanceof InputMaterializationException) {
+            return exception.getMessage();
         }
+
+        return "Worker execution failed";
     }
 
-    private ContainerResult executeSimulation(SimulationJob job) throws IOException {
-        Path jobDir = Paths.get(job.getDirectoryPath());
-
-        if (!Files.exists(jobDir)) {
-            Files.createDirectories(jobDir);
-        }
-
-        Path realJobDir = jobDir.toRealPath();
-
-        if (!Files.exists(workspaceBasePath)) {
-            Files.createDirectories(workspaceBasePath);
-        }
-        Path realWorkspaceBase = workspaceBasePath.toRealPath();
-
-        if (!realJobDir.startsWith(realWorkspaceBase)) {
-            throw new SecurityException("Invalid workspace path: job directory outside workspace base");
-        }
+    private ContainerResult executeSimulation(SimulationJob job, Path jobDir) throws IOException {
 
         VerilatorOptions options = job.getVerilatorOptions();
-        boolean hasTestbench = hasTestbench(jobDir);
+        boolean hasTestbench = job.isTestbenchExpected();
 
         Path targetFile = hasTestbench ? jobDir.resolve("testbench.sv") : jobDir.resolve("design.sv");
+
         String topModule = parserService.resolveTopModule(targetFile);
         boolean usesUvm = parserService.detectUvmUsage(targetFile);
 
@@ -208,13 +196,12 @@ public class WorkerService {
         }
 
         String[] buildCmd = commandBuilder.buildCommand(options, topModule, hasTestbench, usesUvm);
-        log.info("Array: {}", Arrays.toString(buildCmd));
 
         boolean needsRun = options.buildMode() == BuildMode.BINARY && hasTestbench;
 
         log.info("Executing verilator build for job {}", job.getJobId());
-        ContainerResult buildResult = dockerExecutor.runBuild(jobDir, buildCmd,
-                !needsRun, maxMemoryBytes, cpuLimit, buildTimeoutSeconds, maxLogSize, job.getJobId());
+
+        ContainerResult buildResult = dockerExecutor.runBuild(jobDir, buildCmd, !needsRun, maxMemoryBytes, cpuLimit, buildTimeoutSeconds, maxLogSize, job.getJobId());
 
         if (!buildResult.passed()) {
             return buildResult;
@@ -222,80 +209,77 @@ public class WorkerService {
 
         if (needsRun) {
             String[] simCmd = commandBuilder.simulationCommand(topModule, options.simArgs());
-            return dockerExecutor.runSimulation(jobDir, simCmd,
-                    maxMemoryBytes, cpuLimit, runTimeoutSeconds, maxLogSize, buildResult.logs(), job.getJobId());
+
+            return dockerExecutor.runSimulation(jobDir, simCmd, maxMemoryBytes, cpuLimit, runTimeoutSeconds, maxLogSize, buildResult.logs(), job.getJobId());
         }
 
         return buildResult;
     }
 
-    private void uploadArtifactsToS3(Path jobDir, String jobId, ContainerResult result) {
-        try {
-            Path logsFile = jobDir.resolve("simulation.log");
-            Files.writeString(logsFile, result.logs() != null ? result.logs() : "No logs available.");
-            storageService.uploadArtifact(jobId, "simulation.log", logsFile);
+    private void uploadArtifacts(Path jobDir, UUID jobId, ContainerResult result) throws IOException {
 
-            try (var stream = Files.list(jobDir)) {
-                List<Path> waveforms = stream.filter(p ->
-                        p.getFileName().toString().toLowerCase().endsWith(".vcd")
-                ).toList();
+        Path logsFile = jobDir.resolve("simulation.log");
+        Files.writeString(logsFile, result.logs());
+        storageService.uploadOutput(jobId, Output.SIMULATION_LOG, logsFile);
 
-                for (Path waveform : waveforms) {
-                    String standardName = "waveform.vcd";
-                    Path standardPath = jobDir.resolve(standardName);
+        List<Path> waveforms;
 
-                    if (!waveform.getFileName().toString().equals(standardName)) {
-                        Files.move(waveform, standardPath, StandardCopyOption.REPLACE_EXISTING);
-                    }
+        try (var paths = Files.list(jobDir)) {
+            waveforms = paths.filter(path -> path.getFileName().toString().toLowerCase().endsWith(".vcd")).toList();
+        }
 
-                    storageService.uploadArtifact(jobId, standardName, standardPath);
-                    log.info("Uploaded {} for job {}", standardName, jobId);
-                }
-            }
+        if (waveforms.size() > 1) {
+            throw new IOException("Multiple waveform files were produced");
+        }
 
-            Path objDir = jobDir.resolve("obj_dir");
-            if (Files.exists(objDir) && Files.isDirectory(objDir)) {
-                Path zipFile = jobDir.resolve("model.zip");
-                zipDirectory(objDir, zipFile);
-                storageService.uploadArtifact(jobId, "model.zip", zipFile);
-                Files.deleteIfExists(zipFile);
-                log.info("Uploaded model.zip for job {}", jobId);
-            }
+        if (!waveforms.isEmpty()) {
+            storageService.uploadOutput(jobId, Output.WAVEFORM, waveforms.getFirst());
 
-        } catch (IOException e) {
-            log.error("Failed to upload artifacts for job {}", jobId, e);
+            log.info("Uploaded waveform for job {}", jobId);
+        }
+
+        Path objDir = jobDir.resolve("obj_dir");
+
+        if (Files.isDirectory(objDir)) {
+            Path zipFile = jobDir.resolve("model.zip");
+            zipDirectory(objDir, zipFile);
+            storageService.uploadOutput(jobId, Output.MODEL, zipFile);
+
+            log.info("Uploaded model for job {}", jobId);
         }
     }
 
     private void zipDirectory(Path sourceDir, Path zipFilePath) throws IOException {
-        try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(zipFilePath))) {
-            Files.walk(sourceDir)
-                    .filter(path -> !Files.isDirectory(path))
-                    .forEach(path -> {
-                        String entryName = sourceDir.relativize(path).toString().replace("\\", "/");
-                        ZipEntry zipEntry = new ZipEntry(entryName);
-                        try {
-                            zos.putNextEntry(zipEntry);
-                            Files.copy(path, zos);
-                            zos.closeEntry();
-                        } catch (IOException e) {
-                            log.error("Failed to add {} to zip", path, e);
-                        }
-                    });
+
+        List<Path> files;
+
+        try (var paths = Files.walk(sourceDir)) {
+            files = paths.filter(Files::isRegularFile).toList();
+        }
+
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(zipFilePath))) {
+
+            for (Path file : files) {
+                String entryName = sourceDir.relativize(file).toString().replace("\\", "/");
+
+                zip.putNextEntry(new ZipEntry(entryName));
+                Files.copy(file, zip);
+                zip.closeEntry();
+            }
         }
     }
 
-    private void deleteLocalDirectory(Path dir) {
-        if (dir == null || !Files.exists(dir)) return;
+    private void cleanupAttemptWorkspace(Path attemptWorkspace, String jobId) {
+
+        if (attemptWorkspace == null) {
+            return;
+        }
+
         try {
-            FileSystemUtils.deleteRecursively(dir);
-            log.debug("Cleaned up local scratchpad: {}", dir);
+            workspaceService.deleteAttemptWorkspace(attemptWorkspace);
+            log.debug("Cleaned up worker workspace for job {}", jobId);
         } catch (Exception e) {
-            log.warn("Failed to clean up local scratchpad: {}", dir, e);
+            log.warn("Failed to clean up worker workspace for job {}", jobId, e);
         }
-    }
-
-    private boolean hasTestbench(Path jobDir) {
-        return Files.exists(jobDir.resolve("testbench.sv"));
     }
 }

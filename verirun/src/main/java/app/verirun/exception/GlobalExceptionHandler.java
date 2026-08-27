@@ -20,13 +20,6 @@ public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
-    @ExceptionHandler(Exception.class)
-    public ResponseEntity<Map<String, String>> handleGenericException(Exception e) {
-        log.error("Unhandled exception: {}", e.getMessage(), e);
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("error", "An internal error occurred"));
-    }
-
     @ExceptionHandler(InvalidCodeException.class)
     public ResponseEntity<Map<String, String>> handleInvalidCode(InvalidCodeException e) {
         log.warn("Code rejected: {}", e.getMessage());

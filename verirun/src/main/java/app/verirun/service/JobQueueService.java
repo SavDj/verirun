@@ -22,8 +22,25 @@ public class JobQueueService {
         this.jobQueueName = jobQueueName;
     }
 
-    public void enqueueJob(String jobId) {
-        rqueueMessageEnqueuer.enqueue(jobQueueName, new JobMessage(jobId));
-        log.debug("Job {} enqueued to {}", jobId, jobQueueName);
+    public PublicationResult enqueueJob(String jobId) {
+        try {
+            String messageId = rqueueMessageEnqueuer.enqueue(jobQueueName, new JobMessage(jobId));
+
+            if (messageId == null || messageId.isBlank()) {
+                log.warn("Queue publication was not confirmed for job {}", jobId);
+                return PublicationResult.NOT_CONFIRMED;
+            }
+
+            log.debug("Job {} enqueued to {}", jobId, jobQueueName);
+            return PublicationResult.CONFIRMED;
+        } catch (RuntimeException e) {
+            log.warn("Queue publication was not confirmed for job {}", jobId, e);
+            return PublicationResult.NOT_CONFIRMED;
+        }
+    }
+
+    public enum PublicationResult {
+        CONFIRMED,
+        NOT_CONFIRMED
     }
 }

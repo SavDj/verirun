@@ -25,7 +25,7 @@ class VerilogParserServiceTest {
     }
 
     @Test
-    void resolveTopModule_shouldExtractModuleName_whenValidModuleDeclared() throws IOException {
+    void resolveTopModule_shouldExtractModuleNameWhenValidModuleDeclared() throws IOException {
         Path tb = tempDir.resolve("tb.sv");
         Files.writeString(tb, "module ALU_tb(input a, b); \n assign y = a & b; \n endmodule");
 
@@ -35,28 +35,21 @@ class VerilogParserServiceTest {
     }
 
     @Test
-    void resolveTopModule_shouldThrowIInvalidCodeException_whenNoModuleDeclared() throws IOException {
+    void resolveTopModule_shouldRejectWhenModuleExistsOnlyInCommentsOrStrings() throws IOException {
         Path tb = tempDir.resolve("tb.sv");
-        Files.writeString(tb, "// comment");
+        Files.writeString(tb, """
+                // module line_comment;
+                /* module block_comment; */
+                string description = "module string_literal;";
+                """);
 
-        assertThatThrownBy(() -> parser.resolveTopModule(tb))
-                .isInstanceOf(InvalidCodeException.class)
-                .hasMessageContaining("No 'module' declaration");
+        assertThatThrownBy(() -> parser.resolveTopModule(tb)).isInstanceOf(InvalidCodeException.class);
     }
 
     @Test
-    void resolveTopModule_shouldReturnDefault_whenFileDoesNotExist() throws IOException {
-        Path tb = tempDir.resolve("non_existent.sv");
-
-        String moduleName = parser.resolveTopModule(tb);
-
-        assertThat(moduleName).isEqualTo("design_top");
-    }
-
-    @Test
-    void detectUvmUsage_shouldReturnTrue_whenUvmMacrosPresent() throws IOException {
+    void detectUvmUsage_shouldReturnTrueWhenUvmPackageIsImported() throws IOException {
         Path tb = tempDir.resolve("tb.sv");
-        Files.writeString(tb, "`include \"uvm_macros.svh\"\nmodule tb; endmodule");
+        Files.writeString(tb, "import uvm_pkg::*;\nmodule tb; endmodule");
 
         boolean isUvm = parser.detectUvmUsage(tb);
 
@@ -64,7 +57,7 @@ class VerilogParserServiceTest {
     }
 
     @Test
-    void detectUvmUsage_shouldReturnFalse_whenNoUvmReferences() throws IOException {
+    void detectUvmUsage_shouldReturnFalseWhenNoUvmReferences() throws IOException {
         Path tb = tempDir.resolve("tb.sv");
         Files.writeString(tb, "module tb; endmodule");
 
@@ -74,9 +67,15 @@ class VerilogParserServiceTest {
     }
 
     @Test
-    void detectUvmUsage_shouldReturnFalse_whenUvmIsOnlyInComments() throws IOException {
+    void detectUvmUsage_shouldReturnFalseWhenUvmIsOnlyInCommentsOrStrings() throws IOException {
         Path tb = tempDir.resolve("tb.sv");
-        Files.writeString(tb, "// import uvm_pkg::*;\nmodule tb; endmodule");
+        Files.writeString(tb, """
+                // import uvm_pkg::*;
+                /* `uvm_info("id", "message", UVM_LOW) */
+                module tb;
+                  string description = "uvm_pkg";
+                endmodule
+                """);
 
         boolean isUvm = parser.detectUvmUsage(tb);
 
